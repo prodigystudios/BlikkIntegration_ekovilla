@@ -360,67 +360,15 @@ export function groupProgressReports<T extends ProgressReportView>(
 }
 
 /**
- * En rad i fältvyns momentlista: ett moment med sin mätare.
+ * Fältvyns mätare för ett moment: andelen av det sålda, 0–100.
  *
- * `group` är null för ett sålt moment som inget rapporterats på ännu — det har ingen grupp, men
- * besättningen ska ändå se att det finns kvar att bygga.
+ * null = ingen mätare: momentet saknar ett sålt antal att mäta mot (fritext, en rad som lämnat
+ * ordern), eller raden är AVSKRIVEN — en mätare på den läses som jobb kvar att bygga, och den ska
+ * aldrig byggas. Överdrag kapas vid 100; "Över planerat" säger resten.
  */
-export type ProgressMeterRow<T> = {
-  key: string;
-  label: string;
-  unit: string | null;
-  planned: number | null;
-  reported: number;
-  /**
-   * Andel av det sålda, 0–100. null när det inte finns något sålt antal att mäta mot — eller när raden
-   * är avskriven: en mätare på den läses som jobb kvar att bygga, och det ska den aldrig byggas.
-   */
-  percent: number | null;
-  group: ProgressGroup<T> | null;
-};
-
-/**
- * Grupperna som rader UTAN mätare — kontorets läsvy, som bara visar det rapporterade. Samma form som
- * progressMeterRows, så kortet har en renderingsväg och de två inte kan glida isär.
- */
-export function progressGroupRows<T>(groups: Array<ProgressGroup<T>>): Array<ProgressMeterRow<T>> {
-  return groups.map((group) => ({ key: group.key, label: group.label, unit: group.unit, planned: group.planned, reported: group.reported, percent: null, group }));
-}
-
-/**
- * Fältvyns momentlista: ett per SÅLT moment i orderns ordning — även de utan rapporter, "0 av 24 m" —
- * och därefter avvikelserna (fritext och rader som lämnat ordern) i grupperingens ordning.
- *
- * Varför de orapporterade syns: frågan besättningen har när de öppnar kortet är vad som är KVAR att
- * bygga (William 2026-11-03). En lista med bara det som redan rapporterats svarar på motsatt fråga.
- *
- * ⚠️ En AVSKRIVEN rad utan rapporter visas inte: den ska aldrig byggas, och en tom mätare hade sett ut
- * som jobb kvar. Har den rapporter står den kvar, med sin märkning — samma motsägelse kontoret ser.
- *
- * Kontoret läser inte den här listan: där är en rad utan rapporter inget att se.
- */
-export function progressMeterRows<T>(groups: Array<ProgressGroup<T>>, workItems: ProgressWorkItem[]): Array<ProgressMeterRow<T>> {
-  const byKey = new Map(groups.map((group) => [group.key, group]));
-  const percent = (reported: number, planned: number | null, writtenOff: boolean) =>
-    !writtenOff && planned != null && planned > 0 ? Math.min(100, (reported / planned) * 100) : null;
-  const rows: Array<ProgressMeterRow<T>> = [];
-  const shown = new Set<string>();
-
-  for (const item of workItems) {
-    // Samma nyckel som groupProgressReports ger ett kopplat moment.
-    const key = `line:${item.lineItemId}`;
-    const group = byKey.get(key) ?? null;
-    if (!group && item.writtenOff) continue;
-    shown.add(key);
-    const planned = group ? group.planned : item.planned;
-    const reported = group ? group.reported : 0;
-    rows.push({ key, label: group?.label ?? item.label, unit: group?.unit ?? item.unit, planned, reported, percent: percent(reported, planned, item.writtenOff), group });
-  }
-  for (const group of groups) {
-    if (shown.has(group.key)) continue;
-    rows.push({ key: group.key, label: group.label, unit: group.unit, planned: group.planned, reported: group.reported, percent: percent(group.reported, group.planned, group.writtenOff), group });
-  }
-  return rows;
+export function progressGroupPercent(group: Pick<ProgressGroup<unknown>, 'planned' | 'reported' | 'writtenOff'>): number | null {
+  if (group.writtenOff || group.planned == null || group.planned <= 0) return null;
+  return Math.min(100, (group.reported / group.planned) * 100);
 }
 
 /**

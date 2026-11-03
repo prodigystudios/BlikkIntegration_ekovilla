@@ -8,9 +8,8 @@ import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import Meter from '@/components/ui/Meter';
 import {
   groupProgressReports,
-  progressGroupRows,
+  progressGroupPercent,
   progressLocationSuggestions,
-  progressMeterRows,
   PROGRESS_UNIT_FALLBACKS,
   type ProgressReportView,
   type ProgressWorkItem,
@@ -126,11 +125,11 @@ export default function WorkOrderProgressCard({
   // markerad aldrig utförd) ska inte gå att rapportera NY framdrift på, men måste fortfarande gå
   // att slå upp: rapporterades 45 m innan raden skrevs av ska kortet visa "45 av 120 m · Avskriven"
   // och inte "Ej på ordern" — den märkningen är till för arbete som aldrig såldes.
+  // ⚠️ BARA DET RAPPORTERADE, även i fältet. William 2026-11-03: varje `pricing_mode: 'item'`-rad är ett
+  // moment, också avgifterna ("Etableringskostnad 1 st", "Arbetskostnad per man") — att visa alla sålda
+  // moment gav "0 av 1 st" på nästan varje order. Ett moment syns när någon börjat på det; vilka
+  // artiklar som är moment kan märkas senare om det behövs.
   const groups = groupProgressReports(reports, workItems);
-  // Raderna kortet ritar. FÄLTET ser varje sålt moment med en mätare, även de utan rapporter —
-  // frågan där är vad som är kvar att bygga (progressMeterRows). KONTORET ser bara det rapporterade,
-  // precis som förut: där är ett moment utan rapporter inget att se.
-  const rows = canReport ? progressMeterRows(groups, workItems) : progressGroupRows(groups);
   const reportable = workItems.filter((item) => !item.writtenOff);
   const locationSuggestions = progressLocationSuggestions(reports).slice(0, 6);
   // Enhetschips för ett fritextmoment: de enheter ordern faktiskt använder, plus husets vanliga.
@@ -222,7 +221,7 @@ export default function WorkOrderProgressCard({
       ) : loadError ? (
         // "Vi vet inte", inte "inget finns". En tom lista här hade sett ut som ett svar om jobbet.
         <p className="m-0 text-sm text-amber-700">Kunde inte hämta rapporterna. Dra ner för att ladda om innan du rapporterar.</p>
-      ) : rows.length === 0 ? (
+      ) : groups.length === 0 ? (
         // "Ingen har rapporterat", inte "noll gjort". Och säg VAR rapporten görs — kontorets kort
         // är en läsvy, och den som står här och undrar varför den är tom ska inte behöva leta efter
         // skrivstället. Samma val som säckrapporternas tomtext.
@@ -233,44 +232,44 @@ export default function WorkOrderProgressCard({
         </p>
       ) : (
         <div className="grid gap-3">
-          {rows.map((row) => {
-            const { group } = row;
+          {groups.map((group) => {
+            const percent = canReport ? progressGroupPercent(group) : null;
             // ⚠️ Inget "Kvar" på en avskriven rad i fältet: den ska aldrig byggas, och "Kvar 20 m" hade
             // sagt motsatsen. Kontoret ser talet som förut — där är det en avstämning, inte en uppgift.
-            const remaining = row.planned != null && !(canReport && group?.writtenOff) ? Math.max(0, row.planned - row.reported) : null;
+            const remaining = group.planned != null && !(canReport && group.writtenOff) ? Math.max(0, group.planned - group.reported) : null;
             return (
-              <div key={row.key} className="grid gap-1">
+              <div key={group.key} className="grid gap-1">
                 <div className={cn('flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5', !canReport && 'border-b border-[#e8eee5] pb-1')}>
-                  <span className="text-sm font-semibold text-slate-800">{row.label}</span>
+                  <span className="text-sm font-semibold text-slate-800">{group.label}</span>
                   <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-900">
-                    {formatQuantity(row.reported)}
+                    {formatQuantity(group.reported)}
                     {/* Det sålda omfånget, som besättningen behöver för att veta vad som är kvar —
                         se kortets huvud för varför säckkortet gör motsatt val. */}
-                    {row.planned != null ? (
-                      <span className="font-medium text-slate-500"> av {formatQuantity(row.planned)}</span>
+                    {group.planned != null ? (
+                      <span className="font-medium text-slate-500"> av {formatQuantity(group.planned)}</span>
                     ) : null}
-                    {row.unit ? <span className="font-medium text-slate-500"> {row.unit}</span> : null}
+                    {group.unit ? <span className="font-medium text-slate-500"> {group.unit}</span> : null}
                   </span>
                 </div>
                 {/* Fältets mätare. Kontoret har den inte — där är raden ett tal i en läsvy. */}
-                {canReport && row.percent != null ? <Meter percent={row.percent} className="h-1.5 w-full" /> : null}
+                {percent != null ? <Meter percent={percent} className="h-1.5 w-full" /> : null}
 
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                   {remaining != null && remaining > 0 ? (
-                    <span className="font-semibold text-slate-600">Kvar {formatQuantity(remaining)}{row.unit ? ` ${row.unit}` : ''}</span>
+                    <span className="font-semibold text-slate-600">Kvar {formatQuantity(remaining)}{group.unit ? ` ${group.unit}` : ''}</span>
                   ) : null}
-                  {group?.overPlanned ? (
+                  {group.overPlanned ? (
                     <span className={cn(crm.badge, 'border-amber-200 bg-amber-50 text-amber-800')}>Över planerat</span>
                   ) : null}
                   {/* Rapporterat men inte sålt. Kontoret ser samma märkning på ordern — William
                       2026-09-16: avvikelsen ska vara synlig, inte skicka en notis. */}
-                  {group?.notOnOrder ? (
+                  {group.notOnOrder ? (
                     <span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-600')}>Ej på ordern</span>
                   ) : null}
                   {/* Rapporterad framdrift på en rad som markerats som aldrig utförd — en
                       motsägelse kontoret ska se, men en ANNAN än "Ej på ordern": här finns både en
                       rad och ett sålt antal att jämföra mot. */}
-                  {group?.writtenOff ? (
+                  {group.writtenOff ? (
                     <span className={cn(crm.badge, 'border-amber-200 bg-amber-50 text-amber-800')}>Avskriven rad</span>
                   ) : null}
                 </div>
@@ -278,13 +277,13 @@ export default function WorkOrderProgressCard({
                 {/* Per plats — hela skälet att platsen finns. "Hus A 25, Hus B 20" är svaret på
                     frågan nästa team har när de kliver in i ett flerhusprojekt. Visas bara när den
                     säger något utöver momentets egen summa. */}
-                {group && group.locations.length > 1 ? (
+                {group.locations.length > 1 ? (
                   <p className="m-0 text-xs text-slate-500">
                     {group.locations.map((loc) => `${loc.label} ${formatQuantity(loc.total)}`).join(' · ')}
                   </p>
                 ) : null}
 
-                {(group?.items ?? []).map((item) => (
+                {group.items.map((item) => (
                   <div key={item.id} className="grid gap-0.5 text-xs text-slate-500">
                     <div className="flex items-baseline justify-between gap-3">
                       <span className="truncate">

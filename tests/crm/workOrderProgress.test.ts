@@ -3,8 +3,7 @@ import {
   groupProgressReports,
   normalizeLocationKey,
   progressLocationSuggestions,
-  progressGroupRows,
-  progressMeterRows,
+  progressGroupPercent,
   progressWorkItemsFromLineItems,
   resolveProgressEntry,
   UNSPECIFIED_LOCATION_LABEL,
@@ -331,75 +330,33 @@ describe('platsnormalisering och förslag', () => {
   });
 });
 
-describe('progressMeterRows', () => {
+describe('progressGroupPercent', () => {
   const workItems: ProgressWorkItem[] = [
     { lineItemId: 'a', label: 'Landgång', unit: 'm', planned: 120, writtenOff: false },
     { lineItemId: 'b', label: 'Brandmatta', unit: 'st', planned: 4, writtenOff: false },
     { lineItemId: 'c', label: 'Sarg', unit: 'm', planned: null, writtenOff: false },
+    { lineItemId: 'av', label: 'Avskriven landgång', unit: 'm', planned: 30, writtenOff: true },
   ];
+  const percentOf = (lineItemId: string | null, quantity: number, work_item = 'Landgång') => {
+    const [group] = groupProgressReports([ROW({ line_item_id: lineItemId, work_item, quantity })], workItems);
+    return progressGroupPercent(group);
+  };
 
-  it('visar varje sålt moment i orderns ordning, även det som inget rapporterats på', () => {
-    const groups = groupProgressReports([ROW({ line_item_id: 'b', quantity: 1 })], workItems);
-    const rows = progressMeterRows(groups, workItems);
-    expect(rows.map((r) => [r.label, r.reported, r.planned])).toEqual([
-      ['Landgång', 0, 120],
-      ['Brandmatta', 1, 4],
-      ['Sarg', 0, null],
-    ]);
-    expect(rows[0].group).toBeNull();
-    expect(rows[1].group?.items).toHaveLength(1);
+  it('räknar andelen av det sålda', () => {
+    expect(percentOf('a', 30)).toBe(25);
   });
 
-  it('räknar andelen mot det sålda, kapad vid 100, och ingen andel utan sålt antal', () => {
-    const groups = groupProgressReports(
-      [ROW({ line_item_id: 'a', quantity: 30 }), ROW({ line_item_id: 'b', quantity: 6 }), ROW({ line_item_id: 'c', quantity: 5 })],
-      workItems,
-    );
-    const rows = progressMeterRows(groups, workItems);
-    expect(rows.map((r) => r.percent)).toEqual([25, 100, null]);
+  it('kapar överdrag vid 100 — "Över planerat" säger resten', () => {
+    expect(percentOf('b', 6)).toBe(100);
   });
 
-  // En avskriven rad ska aldrig byggas. En tom mätare för den hade sett ut som jobb kvar.
-  it('visar inte en avskriven rad utan rapporter, men behåller den när det finns rapporter', () => {
-    const withWrittenOff: ProgressWorkItem[] = [
-      ...workItems,
-      { lineItemId: 'av', label: 'Avskriven landgång', unit: 'm', planned: 30, writtenOff: true },
-    ];
-    expect(progressMeterRows([], withWrittenOff).map((r) => r.label)).not.toContain('Avskriven landgång');
-
-    const groups = groupProgressReports([ROW({ line_item_id: 'av', quantity: 10 })], withWrittenOff);
-    const row = progressMeterRows(groups, withWrittenOff).find((r) => r.label === 'Avskriven landgång');
-    expect(row).toMatchObject({ reported: 10, planned: 30 });
-    expect(row?.group?.writtenOff).toBe(true);
-    // Ingen mätare: en tredjedels mätare på en avskriven rad läses som 20 m kvar att bygga.
-    expect(row?.percent).toBeNull();
+  it('ger ingen mätare utan sålt antal (rad utan plan, fritext)', () => {
+    expect(percentOf('c', 5)).toBeNull();
+    expect(percentOf(null, 2, 'Extra sarg')).toBeNull();
   });
 
-  it('lägger avvikelserna efter orderns moment', () => {
-    const groups = groupProgressReports(
-      [ROW({ line_item_id: null, work_item: 'Extra sarg', quantity: 2, unit: 'm' }), ROW({ line_item_id: 'a', quantity: 5 })],
-      workItems,
-    );
-    const rows = progressMeterRows(groups, workItems);
-    expect(rows.map((r) => r.label)).toEqual(['Landgång', 'Brandmatta', 'Sarg', 'Extra sarg']);
-    expect(rows[3]).toMatchObject({ planned: null, percent: null });
-    expect(rows[3].group?.notOnOrder).toBe(true);
-  });
-
-  it('ger en tom lista när ordern varken har moment eller rapporter', () => {
-    expect(progressMeterRows([], [])).toEqual([]);
-  });
-});
-
-describe('progressGroupRows', () => {
-  it('ger kontoret bara det rapporterade, utan mätare', () => {
-    const workItems: ProgressWorkItem[] = [
-      { lineItemId: 'a', label: 'Landgång', unit: 'm', planned: 120, writtenOff: false },
-      { lineItemId: 'b', label: 'Brandmatta', unit: 'st', planned: 4, writtenOff: false },
-    ];
-    const groups = groupProgressReports([ROW({ line_item_id: 'b', quantity: 2 })], workItems);
-    expect(progressGroupRows(groups)).toEqual([
-      expect.objectContaining({ label: 'Brandmatta', reported: 2, planned: 4, percent: null }),
-    ]);
+  // En tredjedels mätare på en avskriven rad läses som 20 m kvar att bygga — och den ska aldrig byggas.
+  it('ger ingen mätare på en avskriven rad', () => {
+    expect(percentOf('av', 10)).toBeNull();
   });
 });
