@@ -13,6 +13,15 @@ import { ClockIcon, FIELD_FOCUS_RING, SackIcon } from './fieldUi';
  *
  * `focusout` kommer FÖRE nästa `focusin`; läses fokus direkt där blinkar raden fram mellan två fält.
  * Därför läses det i nästa varv.
+ *
+ * 🧨 OCH ALDRIG MITT I ETT TRYCK. Fokus lämnar fältet redan vid NEDtryckningen (mousedown/pointerdown),
+ * men klicket kommer först vid släppet. Kom raden tillbaka däremellan låg den under fingret när
+ * släppet kom — och en "Spara rapport" som råkade stå där raden brukar sitta tog aldrig emot sitt
+ * klick (hände i slutkontrollen 2026-11-03: formuläret stod kvar osparat). Därför väntar läsningen på
+ * släppet när ett tryck pågår, och tar sitt varv efter klicket.
+ *
+ * ⚠️ GÄLLER `focusin` OCKSÅ. Chrome ger knappen man trycker på fokus redan vid nedtryckningen, och den
+ * händelsen hade visat raden lika tidigt. Bara ett NYTT textfält får verka direkt — då ska raden bort.
  */
 function useTextFieldFocused() {
   const [focused, setFocused] = useState(false);
@@ -25,16 +34,46 @@ function useTextFieldFocused() {
       (el instanceof HTMLElement && el.isContentEditable);
     const update = () => setFocused(isTextField(document.activeElement));
     let timer = 0;
-    const onFocusOut = () => {
+    let pressing = false;
+    let readAfterPress = false;
+    const schedule = () => {
       window.clearTimeout(timer);
       timer = window.setTimeout(update, 0);
     };
-    document.addEventListener('focusin', update);
+    const onPointerDown = () => { pressing = true; };
+    const onPointerUp = () => {
+      pressing = false;
+      if (readAfterPress) {
+        readAfterPress = false;
+        // Klicket skickas efter pointerup i samma varv — nästa varv är efter klicket.
+        schedule();
+      }
+    };
+    const onFocusOut = () => {
+      if (pressing) readAfterPress = true;
+      else schedule();
+    };
+    const onFocusIn = () => {
+      if (isTextField(document.activeElement)) {
+        window.clearTimeout(timer);
+        readAfterPress = false;
+        setFocused(true);
+      } else if (pressing) readAfterPress = true;
+      else schedule();
+    };
+    // Capture: ett kort som stoppar spridningen på sina egna tryck får inte lämna raden dold.
+    document.addEventListener('focusin', onFocusIn);
     document.addEventListener('focusout', onFocusOut);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('pointerup', onPointerUp, true);
+    document.addEventListener('pointercancel', onPointerUp, true);
     return () => {
       window.clearTimeout(timer);
-      document.removeEventListener('focusin', update);
+      document.removeEventListener('focusin', onFocusIn);
       document.removeEventListener('focusout', onFocusOut);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('pointerup', onPointerUp, true);
+      document.removeEventListener('pointercancel', onPointerUp, true);
     };
   }, []);
   return focused;
