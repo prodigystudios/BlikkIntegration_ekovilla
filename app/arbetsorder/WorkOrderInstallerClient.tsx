@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/shared/cn';
-import { crm, workOrderStatusLabel, workOrderStatusClass } from '@/app/crm/lib/crmTokens';
-import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
+import { workOrderStatusLabel, workOrderStatusClass } from '@/app/crm/lib/crmTokens';
+import { TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import WorkOrderCommentsTab from '@/app/crm/arbetsorder/WorkOrderCommentsTab';
 import WorkOrderArticles, { type ArticleLineItem } from '@/app/crm/arbetsorder/WorkOrderArticles';
 import { scopeLineItemsForDisplay } from '@/lib/domains/crm/workOrderStages';
@@ -21,10 +20,13 @@ import { useWorkOrderActivity } from '@/app/crm/arbetsorder/useWorkOrderActivity
 import { useWorkOrderFiles } from '@/app/crm/arbetsorder/useWorkOrderFiles';
 import { useCustomerContact } from '@/app/crm/arbetsorder/useCustomerContact';
 import { useAssigneeContact } from '@/app/crm/arbetsorder/useAssigneeContact';
-import { formatDate, joinAddress, documentRef, orderLookupRef } from '@/app/crm/lib/format';
+import { formatDate, documentRef, orderLookupRef } from '@/app/crm/lib/format';
 import { inferMaterialFromArticle } from '@/lib/domains/crm/materials';
-
-const CRM_PRIMARY = '#1a3f26'; // brand green; --crm-primary is scoped to /crm so hardcode here
+import { callablePhone, fieldViewHeading } from './fieldView';
+import FieldHeader, { BackToSchedule } from './_components/FieldHeader';
+import FieldContactsCard from './_components/FieldContactsCard';
+import FieldBeforeLeavingCard from './_components/FieldBeforeLeavingCard';
+import { FIELD_CARD, FIELD_DIVIDER, FIELD_SECTION_TITLE, FIELD_SEGMENT_TRACK, FIELD_SHARED_CARD, FIELD_SKELETON } from './_components/fieldUi';
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
 
@@ -82,19 +84,20 @@ function useFieldStage(workOrderId: string, segmentId: string | null) {
  *
  * 🧨 Utan den blir beskärningen tyst, och en tyst beskärning är värre än ingen: besättningen ser en
  * kortare order och har inget sätt att veta om det är etappen eller ett fel i underlaget.
+ *
+ * Står ovanför flikarna, alltså på VARJE flik — Info och Artiklar är båda beskurna, och man kan stå på
+ * Artiklar utan att ha varit på Info. Etappens arbetsbeskrivning bor i "Att göra" på Info-fliken; här
+ * hade den skjutit flikraden upp och ner vid varje flikbyte.
  */
-function StageBanner({ stage, withDescription = false }: { stage: FieldStage; withDescription?: boolean }) {
+function StageBanner({ stage }: { stage: FieldStage }) {
   return (
-    <div className="grid gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
-      <p className="text-sm font-bold text-amber-900">
+    <div className="grid gap-1 rounded-[14px] border border-solid border-amber-200 bg-amber-50 px-3.5 py-3">
+      <p className="m-0 text-sm font-bold text-amber-900">
         Etapp {stage.stage_number} · {stage.title}
       </p>
-      <p className="text-xs text-amber-800">
+      <p className="m-0 text-[13px] leading-snug text-amber-800">
         Du ser den här etappens del av ordern. Resten av jobbet utförs vid ett annat tillfälle.
       </p>
-      {withDescription && stage.work_description ? (
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-amber-900">{stage.work_description}</p>
-      ) : null}
     </div>
   );
 }
@@ -128,7 +131,6 @@ export default function WorkOrderInstallerClient({
   /** Har den som tittar en skyddsrondsnyckel? Se app/arbetsorder/[id]/page.tsx. */
   showSafetyRounds?: boolean;
 }) {
-  const router = useRouter();
   const stage = useFieldStage(workOrderId, segmentId);
   const [workOrder, setWorkOrder] = useState<InstallerWorkOrder | null>(null);
   const [loading, setLoading] = useState(true);
@@ -234,21 +236,37 @@ export default function WorkOrderInstallerClient({
     return () => { active = false; };
   }, [workOrderId]);
 
+  // Sidans yta i full bredd. Fältvyn renderas utan appskal (CHROMELESS_PREFIXES i AppShell), så
+  // bakgrunden måste ligga här och inte på den smala spalten — annars står den vita kroppen kvar på
+  // sidorna av en platta.
+  //
+  // 🧨 `grid-cols-1`, inte bara `grid`. Utan explicit kolumn växer rutnätet till sitt bredaste barns
+  // minsta bredd — en lång länk i en kommentar räcker — och HELA sidan blöder ut åt höger. Body har
+  // overflow-x:hidden, så det syns som avklippta kort, inte som en scrollbar. Samma fälla som
+  // CRM-sidornas rötter (grid blowout), och samma lagning: minmax(0,1fr) klamrar kolumnen.
+  const page = (children: ReactNode) => (
+    <div className="min-h-dvh bg-[var(--ui-surface-muted)]">
+      <div className="mx-auto grid max-w-2xl grid-cols-1 gap-4 px-4 pb-10 pt-3">{children}</div>
+    </div>
+  );
+
   if (loading) {
-    return (
-      <div className="mx-auto grid max-w-2xl gap-4 px-4 py-6">
-        <div className="h-8 w-40 animate-pulse rounded-lg bg-[#dfe6da]" />
-        <div className="h-40 animate-pulse rounded-2xl bg-[#dfe6da]" />
-      </div>
+    return page(
+      <div role="status" className="grid grid-cols-1 gap-4">
+        <span className="sr-only">Hämtar arbetsordern…</span>
+        <div className={cn('h-11 w-36 rounded-xl', FIELD_SKELETON)} />
+        <div className={cn('h-28 rounded-[18px]', FIELD_SKELETON)} />
+        <div className={cn('h-[52px] rounded-[14px]', FIELD_SKELETON)} />
+      </div>,
     );
   }
 
   if (error || !workOrder) {
-    return (
-      <div className="mx-auto grid max-w-2xl gap-4 px-4 py-6">
-        <button type="button" onClick={() => router.back()} className="w-fit text-sm text-slate-500 hover:text-slate-800">← Tillbaka</button>
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700">{error || 'Arbetsordern hittades inte.'}</div>
-      </div>
+    return page(
+      <>
+        <div><BackToSchedule /></div>
+        <div className="rounded-[18px] border border-solid border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-700">{error || 'Arbetsordern hittades inte.'}</div>
+      </>,
     );
   }
 
@@ -269,14 +287,12 @@ export default function WorkOrderInstallerClient({
     phone: snapshot.phone || null,
     email: snapshot.email || null,
   };
-  const phone: string | null = contact.phone;
-  const email: string | null = contact.email;
-  const contactName: string | null = contact.contactName;
-  // Slutkunden på plats är en ANNAN person än kundens kontakt, och kortet nedan byter både rubrik
-  // och namnfallback på det. Reserven ovan (snapshoten, när uppslaget inte svarar) bär kundens
-  // kontakt, alltså aldrig en slutkund — därför läses flaggan ur `customerInfo` och inte `contact`.
+  // Slutkunden på plats är en ANNAN person än kundens kontakt, och kontaktkortet byter både roll och
+  // namnfallback på det. Reserven ovan (snapshoten, när uppslaget inte svarar) bär kundens kontakt,
+  // alltså aldrig en slutkund — därför läses flaggan ur `customerInfo` och inte `contact`.
   const onSite = customerInfo?.isOnSiteContact === true;
-  const addressText = joinAddress([workOrder.work_address?.street_address, workOrder.work_address?.postal_code, workOrder.work_address?.city]);
+  const heading = fieldViewHeading(workOrder.project_name, workOrder.work_address);
+  const orderRef = documentRef(workOrder.fortnox_order_number, workOrder.order_number);
   const workScope = workOrder.internal_handoff?.work_scope || '';
   const handoffNotes = workOrder.internal_handoff?.handoff_notes || '';
 
@@ -309,133 +325,74 @@ export default function WorkOrderInstallerClient({
     ...(canReportTime ? [['time', 'Tid'] as [InstallerTab, string]] : []),
   ];
 
-  return (
-    <div className="mx-auto grid max-w-2xl gap-5 px-4 py-6" style={{ minHeight: '100dvh', backgroundColor: '#e5ede5' }}>
-      {/* Header */}
-      <div>
-        <button type="button" onClick={() => router.back()} className="mb-2 inline-flex w-fit items-center gap-1.5 text-sm text-slate-500 transition hover:text-slate-800">← Tillbaka</button>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={cn(crm.badge, workOrderStatusClass[workOrder.status])}>{workOrderStatusLabel[workOrder.status]}</span>
-          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{documentRef(workOrder.fortnox_order_number, workOrder.order_number)}</span>
-        </div>
-        <h1 className="m-0 mt-1 text-xl font-bold tracking-tight text-slate-900">{workOrder.project_name}</h1>
-        <p className="m-0 text-sm text-slate-500">{workOrder.client_name} · Planerad {formatDate(workOrder.desired_installation_date)}</p>
-      </div>
+  return page(
+    <>
+      <FieldHeader
+        orderRef={orderRef}
+        statusLabel={workOrderStatusLabel[workOrder.status]}
+        statusClass={workOrderStatusClass[workOrder.status]}
+        heading={heading}
+        clientName={workOrder.client_name}
+        plannedDate={formatDate(workOrder.desired_installation_date)}
+        phone={callablePhone(contact.phone)}
+      />
 
-      {/* Tabs */}
-      <div className="flex flex-wrap gap-2">
+      {/* 🧨 ETAPPEN MÅSTE SÄGAS RAKT UT. Beskärningen tar bort rader ur artikellistan och ur
+          materialvalet; syns inte VARFÖR läser besättningen en kortare order som om det vore hela
+          jobbet — och den som saknar en rad tror att kontoret glömt den. Banderollen säger både vilken
+          del de har och att resten finns. */}
+      {stage ? <StageBanner stage={stage} /> : null}
+
+      {/* Filfliken bär antalet först när listan är hämtad — den hämtas när fliken öppnas, inte innan
+          (se useWorkOrderFiles ovan). Ett antal före det hade varit en gissning. */}
+      <TabsList
+        aria-label="Arbetsorderns delar"
+        className={cn(FIELD_SEGMENT_TRACK, tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3')}
+      >
         {tabs.map(([value, label]) => (
-          <button
+          <TabsTrigger
             key={value}
-            type="button"
+            id={`field-tab-${value}`}
+            aria-controls={`field-panel-${value}`}
+            variant="segmented"
+            active={activeTab === value}
             onClick={() => setActiveTab(value)}
-            className={cn('rounded-full border px-3.5 py-1.5 text-sm font-semibold transition', activeTab === value ? 'text-white' : 'border-[#e0e8dc] bg-[#f9fbf7] text-slate-600')}
-            style={activeTab === value ? { backgroundColor: CRM_PRIMARY, borderColor: CRM_PRIMARY } : undefined}
           >
-            {label}
-          </button>
+            {/* min-w-0 + truncate: fyra flikar på en 320 px-telefon får inte spränga raden. */}
+            <span className="min-w-0 truncate">
+              {value === 'files' && files.files.length > 0 ? `${label} · ${files.files.length}` : label}
+            </span>
+          </TabsTrigger>
         ))}
-      </div>
+      </TabsList>
 
-      {/* Info */}
+      {/* Info — i den ordning dagen går: vad som ska göras, vad som rapporteras, vem man ringer, vad
+          som görs innan man åker, och sist kommentarerna (dit en @-notis landar). */}
       {activeTab === 'info' ? (
-        <div className="grid gap-4">
-          {(phone || email || contactName) ? (
-            <div className={cn(crm.cardInner, 'grid gap-3')}>
-              {/* ⚠️ RUBRIKEN MÅSTE FÖLJA VEM UPPGIFTERNA GÄLLER. `getWorkOrderCustomerContact`
-                  svarar med slutkunden när ordern har en, och hen är en ANNAN person än kundens
-                  kontakt — en byggare beställer, fastighetsägaren står på plats. Kortet skrev
-                  "Kundkontakt" över båda, så besättningen kunde ringa och presentera sig för fel
-                  person, eller lämna ett meddelande hos någon som inte beställt jobbet. */}
-              <p className={crm.sectionTitle}>{onSite ? 'Kontakt på plats' : 'Kundkontakt'}</p>
-              {/* ⚠️ Kundnamnet får INTE fylla i för en namnlös SLUTKUND. Både offerten och ordervyn
-                  släpper igenom en slutkund med bara telefon, och då skrev kortet ut byggarens
-                  bolagsnamn över fastighetsägarens nummer — alltså en påhittad identitet, inte en
-                  saknad. För kundens egen kontakt är fallbacken däremot rätt: där ÄR kunden den
-                  personen när ingen kontakt fångats. */}
-              <p className="text-sm font-semibold text-slate-900">
-                {contactName || (onSite ? 'Namn saknas' : workOrder.client_name)}
-              </p>
-              <div className="grid gap-1.5 text-sm">
-                {phone ? <PhoneLink value={phone} /> : null}
-                {email ? <EmailLink value={email} /> : null}
+        <div role="tabpanel" id="field-panel-info" aria-labelledby="field-tab-info" className="grid grid-cols-1 gap-4">
+          <section className={cn(FIELD_CARD, 'grid gap-3')} aria-labelledby="field-todo-title">
+            <h2 id="field-todo-title" className={FIELD_SECTION_TITLE}>Att göra</h2>
+            {/* Etappens egen arbetsbeskrivning står FÖRE orderns: den är skriven för just den här
+                omgången, medan orderns gäller hela jobbet. Ingen ersätter den andra. */}
+            {stage?.work_description ? (
+              <div className="grid gap-1">
+                <p className="m-0 text-[13px] font-semibold text-slate-600">Den här etappen</p>
+                <p className="m-0 whitespace-pre-wrap text-[15px] leading-relaxed text-slate-900">{stage.work_description}</p>
               </div>
-              {/* Lånat nummer måste säga vems det är. Slutkunden fångas ofta med bara namn, och då
-                  lånar uppslaget kundens nummer så att besättningen kan nå NÅGON — men utan den här
-                  raden läses det som slutkundens, och man ringer och frågar efter fel person. */}
-              {onSite && customerInfo?.phoneFromCustomer && phone ? (
-                <p className="text-xs text-slate-500">Numret går till kundens kontakt – kontakten på plats har inget eget.</p>
-              ) : null}
-            </div>
-          ) : null}
-
-          {/* Ansvarig säljare — vem på kontoret som sålde jobbet, alltså vem man ringer när något
-              på ordern inte stämmer. Utan den fick besättningen gissa, eller ringa kunden om en
-              uppgift kunden inte äger.
-
-              ⚠️ LIGGER DIREKT UNDER KUNDKONTAKTEN OCH SER NÄSTAN LIKADAN UT — därför måste
-              rubriken och hjälptexten göra skillnaden. Två ringbara kort i rad är precis den yta
-              där man trycker på fel nummer, och att ringa kunden med en fråga om arbetsordern är
-              värre än att inte ringa alls.
-
-              Renderas inte alls när ordern är otilldelad eller den ansvariges profil är tom —
-              en rubrik över ett streck säger ingenting man inte redan visste. */}
-          {assignee ? (
-            <div className={cn(crm.cardInner, 'grid gap-3')}>
-              <p className={crm.sectionTitle}>Ansvarig säljare</p>
-              <p className="text-sm font-semibold text-slate-900">{assignee.name || 'Namn saknas'}</p>
-              {assignee.phone ? (
-                <>
-                  <div className="grid gap-1.5 text-sm">
-                    <PhoneLink value={assignee.phone} />
-                  </div>
-                  <p className="text-xs text-slate-500">Ring säljaren om något inte stämmer i arbetsordern.</p>
-                </>
-              ) : (
-                // Numret kommer ur den ansvariges egen profil och kan mycket väl saknas där. Säg
-                // det rakt ut och peka på listan som har det, i stället för att låta kortet se
-                // trasigt ut.
-                <p className="text-xs text-slate-500">
-                  Inget nummer i profilen –{' '}
-                  <Link href="/kontakt-lista" className="font-semibold text-slate-600 underline underline-offset-2 hover:text-slate-900">
-                    sök i Kontaktlistan
-                  </Link>.
-                </p>
-              )}
-            </div>
-          ) : null}
-
-          <div className={cn(crm.cardInner, 'grid gap-2')}>
-            <div className="flex items-center justify-between gap-2">
-              <p className={crm.sectionTitle}>Arbetsadress</p>
-              {addressText ? <AddressLink value={addressText} className="text-xs" /> : null}
-            </div>
-            <p className="text-sm leading-relaxed text-slate-700">{addressText || '–'}</p>
-            {workOrder.work_address?.delivery_address ? (
-              <p className="text-xs text-slate-500">Leverans: {workOrder.work_address.delivery_address}</p>
             ) : null}
-          </div>
+            <div className={cn('grid gap-1.5', stage?.work_description && cn(FIELD_DIVIDER, 'pt-3'))}>
+              {stage ? <p className="m-0 text-[13px] font-semibold text-slate-600">För hela ordern</p> : null}
+              {workScope ? <p className="m-0 text-base font-semibold leading-snug text-slate-900">{workScope}</p> : null}
+              {handoffNotes ? (
+                <p className="m-0 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{handoffNotes}</p>
+              ) : (!workScope ? <p className="m-0 text-sm text-slate-500">Ingen arbetsbeskrivning angiven.</p> : null)}
+            </div>
+          </section>
 
-          {/* 🧨 ETAPPEN MÅSTE SÄGAS RAKT UT. Beskärningen nedan tar bort rader ur artikellistan och
-              ur materialvalet; syns inte VARFÖR läser besättningen en kortare order som om det vore
-              hela jobbet — och den som saknar en rad tror att kontoret glömt den. Banderollen säger
-              både vilken del de har och att resten finns.
-
-              Etappens egen arbetsbeskrivning står FÖRE orderns: den är skriven för just den här
-              omgången, medan orderns gäller hela jobbet. Ingen ersätter den andra. */}
-          {stage ? <StageBanner stage={stage} withDescription /> : null}
-
-          <div className={cn(crm.cardInner, 'grid gap-2')}>
-            <p className={crm.sectionTitle}>Arbetsbeskrivning{stage ? ' för hela ordern' : ''}</p>
-            {workScope ? <p className="text-sm font-medium text-slate-800">{workScope}</p> : null}
-            {handoffNotes ? (
-              <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{handoffNotes}</p>
-            ) : (!workScope ? <p className="text-sm text-slate-400">Ingen arbetsbeskrivning angiven.</p> : null)}
-          </div>
-
-          {/* Säckrapport — dörr 2. Ligger efter arbetsbeskrivningen (som säger vad som SKA göras)
-              och före tidrapporteringen, alltså där dagen faktiskt tar slut. */}
+          {/* Säckrapport — dörr 2. Direkt efter "Att göra" (som säger vad som SKA göras): det är den
+              besättningen fyller i när dagen tar slut. */}
           <WorkOrderSackReportCard
+            className={FIELD_SHARED_CARD}
             reports={sackReports.reports}
             loading={sackReports.loading}
             hasFinal={sackReports.hasFinal}
@@ -456,6 +413,7 @@ export default function WorkOrderInstallerClient({
               Där vore en sen delrapport en tyst nolloperation (finalen vinner); här finns ingen
               final, och landgång kan byggas på ett återbesök. */}
           <WorkOrderProgressCard
+            className={FIELD_SHARED_CARD}
             reports={progressReports.reports}
             workItems={progressWorkItems}
             loading={progressReports.loading}
@@ -466,66 +424,24 @@ export default function WorkOrderInstallerClient({
             onDelete={progressReports.remove}
           />
 
-          {/* Egenkontroll — de två vägarna till pappersarbetet, båda med ordernumret ifyllt.
-              Ligger efter säckrapporten med flit: det är samma ögonblick i dagen, och sambandet
-              står redan skrivet på kortet ovanför (egenkontrollens säckar ERSÄTTER
-              delrapporterna). Innan detta fanns fick installatören lämna ordern, leta upp
-              Egenkontroll i menyn och skriva av numret hen just tittade på.
+          <FieldContactsCard
+            contact={{
+              contactName: contact.contactName,
+              phone: contact.phone,
+              email: contact.email,
+              onSite,
+              phoneFromCustomer: customerInfo?.phoneFromCustomer === true,
+            }}
+            clientName={workOrder.client_name}
+            assignee={assignee}
+          />
 
-              ⚠️ LÄNKAR, INTE KNAPPAR. Båda navigerar. En <button onClick={router.push}> hade
-              sett likadan ut men tappat mittenklick, "öppna i ny flik" och skärmläsarens
-              länkroll — och den som fyller i en egenkontroll vill ofta ha arbetsordern kvar i
-              en flik bredvid.
-
-              ⚠️ var(--ek-green), INTE var(--crm-primary). Den senare är scopad till CRM-skalet
-              och når inte hit — samma skäl som CRM_PRIMARY-konstanten högst upp i filen. */}
-          <div className={cn(crm.cardInner, 'grid gap-3')}>
-            <p className={crm.sectionTitle}>Egenkontroll</p>
-            {lookupNumber ? (
-              <>
-                <p className="m-0 text-sm leading-relaxed text-slate-700">
-                  Formuläret öppnas med order{' '}
-                  <strong className="font-semibold">{documentRef(workOrder.fortnox_order_number, workOrder.order_number)}</strong>{' '}
-                  ifyllt — kund, adress, datum och etapper hämtas automatiskt.
-                </p>
-                <Link
-                  href={`/egenkontroll?orderId=${encodeURIComponent(lookupNumber)}`}
-                  // min-h-11 och inte h-11: etiketten radbryts på en smal telefon i stående läge,
-                  // och en fast höjd hade kapat andra raden. 44 px är golvet för en hand i handske.
-                  className="inline-flex min-h-11 w-full items-center justify-center rounded-xl px-4 py-2 text-center text-sm font-semibold text-white no-underline transition active:scale-[0.99]"
-                  style={{ backgroundColor: 'var(--ek-green)' }}
-                >
-                  Skapa egenkontroll
-                </Link>
-                {/* ⚠️ "Sök i arkivet", inte "egenkontrollen för den här ordern". Arkivet filtrerar
-                    på FILNAMNET, som bär det nummer installatören skrev in när rapporten lämnades
-                    — med knappen ovan blir det alltid det här numret, men äldre filer kan bära det
-                    andra (internt kontra Fortnox). Länken får inte lova en exakthet den inte har.
-
-                    Den visas ALLTID, aldrig gömd bakom sackReports.hasFinal: en egenkontroll utan
-                    säckrader skriver inga final-rader alls, så hasFinal === false bevisar inte att
-                    ingen egenkontroll finns. Arkivet svarar självt "Inga matchande resultat". */}
-                <Link
-                  href={`/archive?q=${encodeURIComponent(lookupNumber)}`}
-                  className="inline-flex min-h-11 w-fit items-center text-sm font-semibold text-slate-600 no-underline transition hover:text-slate-900"
-                >
-                  Sök i arkivet efter den här ordern →
-                </Link>
-              </>
-            ) : (
-              // Utan nummer skulle båda länkarna garanterat landa på "Ordern hittades inte"
-              // respektive ett tomt arkiv. Säg det i stället för att erbjuda en väg som inte finns.
-              <p className="m-0 text-sm leading-relaxed text-slate-600">
-                Ordern saknar ordernummer, så egenkontrollen kan inte hämta jobbet automatiskt.
-                Öppna <strong className="font-semibold">Ny egenkontroll</strong> i menyn och fyll i
-                uppgifterna för hand.
-              </p>
-            )}
-          </div>
+          <FieldBeforeLeavingCard lookupNumber={lookupNumber} orderRef={orderRef} />
 
           {/* Skyddsrond — bara för den som har en skyddsrondsnyckel (rondledaren, ofta en arbetsledare
-              med nyckeln personligt). Efter egenkontrollen: samma slags pappersarbete på plats, och
-              ronden görs med ordern öppen i handen. Besättningen i övrigt ser inget kort alls. */}
+              med nyckeln personligt). Besättningen ser inget kort alls. Står utanför "Innan ni åker"
+              med flit: ronden är chefens arbete, inte något besättningen gör innan de åker (William
+              2026-11-03). Kortet delas med kontorsvyn och är orört. */}
           <WorkOrderSafetyRoundsCard workOrderId={workOrderId} visible={showSafetyRounds} />
 
           {/* Var tiden rapporteras. Besättningen har ingen Tid-flik här (den är öppen bara för
@@ -540,27 +456,26 @@ export default function WorkOrderInstallerClient({
               Döljs för den som HAR Tid-fliken: två anvisningar som pekar åt olika håll är värre än
               ingen alls. */}
           {!canReportTime ? (
-            <div className="grid gap-2 rounded-2xl border border-solid border-amber-200 bg-amber-50 p-3.5">
-              <p className={cn(crm.sectionTitle, 'text-amber-700')}>Tidrapportering</p>
+            <div className="grid gap-2 rounded-[18px] border border-solid border-amber-200 bg-amber-50 p-4">
+              <p className={cn(FIELD_SECTION_TITLE, 'text-amber-800')}>Tidrapportering</p>
               <p className="m-0 text-sm leading-relaxed text-amber-900">
                 Rapportera tiden i <strong className="font-semibold">Tidrapport</strong>. Ordern{' '}
-                <strong className="font-semibold">{documentRef(workOrder.fortnox_order_number, workOrder.order_number)}</strong>{' '}
+                <strong className="font-semibold">{orderRef}</strong>{' '}
                 går att välja direkt där, på den dag du är schemalagd på jobbet.
               </p>
-              {/* ⚠️ var(--ek-green) finns inte i den här rutan att luta sig mot — länken ärver
-                  bärnstensfärgen och står kvar som text, understruken. Samma skäl som
-                  egenkontrollänkarna ovan: en <button> med router.push hade tappat mittenklick. */}
+              {/* ⚠️ En länk, inte en knapp med router.push — den hade tappat mittenklick. */}
               <Link
                 href="/tid"
                 className="inline-flex min-h-11 w-fit items-center text-sm font-semibold text-amber-900 underline underline-offset-2 transition hover:text-amber-700"
               >
-                Öppna Tidrapport →
+                Öppna Tidrapport
               </Link>
             </div>
           ) : null}
 
           {/* Comments (write) — at the bottom of Info, no longer a separate tab */}
           <WorkOrderCommentsTab
+            className={FIELD_SHARED_CARD}
             comments={activity.comments}
             loading={activity.commentsLoading}
             currentUserId={currentUserId}
@@ -573,60 +488,59 @@ export default function WorkOrderInstallerClient({
         </div>
       ) : null}
 
-      {/* Articles (read-only) */}
+      {/* Articles (read-only). Etappbanderollen står ovanför flikarna och gäller här också — listan
+          nedan är beskuren till etappen. */}
       {activeTab === 'articles' ? (
-        <div className="grid gap-3">
-          {/* ⚠️ BANDEROLLEN MÅSTE FINNAS HÄR OCKSÅ. Listan nedan är beskuren till etappen; utan en
-              rad som säger varför läser besättningen en kortare order som om det vore hela jobbet,
-              och den som saknar en artikel tror att kontoret glömt den. Info-fliken hjälper inte —
-              man kan stå här utan att ha varit där. Utan beskrivningen, som hör till Info. */}
-          {stage ? <StageBanner stage={stage} /> : null}
-        <WorkOrderArticles
-          items={scopedLineItems}
-          currencyCode={workOrder.currency_code}
-          vatPercent={workOrder.vat_percent}
-          quoteType={workOrder.quote_type}
-          rotDetails={workOrder.rot_details}
-          saving={false}
-          fortnoxConnected={false}
-          canEdit={false}
-          onSave={async () => false}
-        />
+        <div role="tabpanel" id="field-panel-articles" aria-labelledby="field-tab-articles" className="grid grid-cols-1 gap-3">
+          <WorkOrderArticles
+            items={scopedLineItems}
+            currencyCode={workOrder.currency_code}
+            vatPercent={workOrder.vat_percent}
+            quoteType={workOrder.quote_type}
+            rotDetails={workOrder.rot_details}
+            saving={false}
+            fortnoxConnected={false}
+            canEdit={false}
+            onSave={async () => false}
+          />
         </div>
       ) : null}
 
       {/* Filer — samma komponent som kontorets flik. Interna filer har redan filtrerats bort av
           RLS innan de nådde hit, och `canUpload` kommer från routen (besättning på jobbet). */}
       {activeTab === 'files' ? (
-        <WorkOrderFilesTab
-          workOrderId={workOrderId}
-          files={files.files}
-          loading={files.loading}
-          currentUserId={currentUserId}
-          canUpload={files.canUpload}
-          canMarkInternal={files.canMarkInternal}
-          canDeleteAny={files.canDeleteAny}
-          uploadProgress={files.uploadProgress}
-          onUpload={files.uploadFiles}
-          onDelete={files.deleteFile}
-        />
+        <div role="tabpanel" id="field-panel-files" aria-labelledby="field-tab-files">
+          <WorkOrderFilesTab
+            workOrderId={workOrderId}
+            files={files.files}
+            loading={files.loading}
+            currentUserId={currentUserId}
+            canUpload={files.canUpload}
+            canMarkInternal={files.canMarkInternal}
+            canDeleteAny={files.canDeleteAny}
+            uploadProgress={files.uploadProgress}
+            onUpload={files.uploadFiles}
+            onDelete={files.deleteFile}
+          />
+        </div>
       ) : null}
 
       {/* Tid — samma komponent som kontorets flik, alltså samma klockslagskrav och samma
           serveruträkning av minuterna. Fältet ska inte ha en egen variant av regeln. */}
       {activeTab === 'time' && canReportTime ? (
-        <WorkOrderTimeTab
-          entries={activity.timeEntries}
-          loading={activity.timeEntriesLoading}
-          totalHours={totalLoggedHours}
-          currentUserId={currentUserId}
-          namesById={activity.namesById}
-          onCreate={activity.createTimeEntry}
-          onUpdate={activity.updateTimeEntry}
-          onDelete={activity.deleteTimeEntry}
-        />
+        <div role="tabpanel" id="field-panel-time" aria-labelledby="field-tab-time">
+          <WorkOrderTimeTab
+            entries={activity.timeEntries}
+            loading={activity.timeEntriesLoading}
+            totalHours={totalLoggedHours}
+            currentUserId={currentUserId}
+            namesById={activity.namesById}
+            onCreate={activity.createTimeEntry}
+            onUpdate={activity.updateTimeEntry}
+            onDelete={activity.deleteTimeEntry}
+          />
+        </div>
       ) : null}
-
-    </div>
+    </>,
   );
 }

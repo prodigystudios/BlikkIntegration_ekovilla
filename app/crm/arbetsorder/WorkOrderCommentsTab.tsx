@@ -69,9 +69,11 @@ type Props = {
    * fakturaunderlaget men har ingen skrivnyckel, så knapparna hade bara slutat i 403.
    */
   canEdit?: boolean;
+  /** Kortets yta, ovanpå `crm.cardInner` — fältvyn ger det sitt eget kortspråk. Kontoret skickar inget. */
+  className?: string;
 };
 
-export default function WorkOrderCommentsTab({ comments, loading, currentUserId, mentionUsers, namesById, onCreate, onUpdate, onDelete, canEdit = true }: Props) {
+export default function WorkOrderCommentsTab({ comments, loading, currentUserId, mentionUsers, namesById, onCreate, onUpdate, onDelete, canEdit = true, className }: Props) {
   const [draft, setDraft] = useState('');
   const [creating, setCreating] = useState(false);
   // Ids picked from the @-autocomplete for the new comment (id → full_name). The id is otherwise
@@ -117,11 +119,15 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
   }
 
   return (
-    <div className={cn(crm.cardInner, 'grid gap-4')}>
+    // 🧨 `grid-cols-1` på varje rutnät i kortet. Utan explicit kolumn växer spåret till det bredaste
+    // barnets minsta bredd, och en lång länk i en kommentar ("Ladda ner här: https://…") gör det
+    // bredare än skärmen — `break-words` sänker inte minsta bredden. På fältvyns telefon blödde hela
+    // sidan ut åt höger. minmax(0,1fr) klamrar spåret; renderingen är annars densamma.
+    <div className={cn(crm.cardInner, 'grid grid-cols-1 gap-4', className)}>
       <p className={crm.cardTitle}>Projektkommentarer</p>
 
       {/* Thread first */}
-      <div className="grid gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {loading ? <div className="text-sm text-slate-500">Laddar kommentarer…</div> : null}
         {!loading && comments.length === 0 ? (
           <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">
@@ -137,7 +143,7 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
           const isOwn = !!currentUserId && item.created_by === currentUserId;
           if (editingId === item.id) {
             return (
-              <div key={item.id} className="grid gap-2 rounded-xl border border-emerald-200 bg-[#f1f5ee] px-3 py-3">
+              <div key={item.id} className="grid grid-cols-1 gap-2 rounded-xl border border-emerald-200 bg-[#f1f5ee] px-3 py-3">
                 <MentionTextarea value={editBody} onChange={setEditBody} users={mentionUsers} rows={3} />
                 <div className="flex items-center justify-end gap-2">
                   <button type="button" onClick={() => setEditingId(null)} className={crm.ghostButton}>Avbryt</button>
@@ -149,7 +155,7 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
             );
           }
           return (
-            <div key={item.id} className="grid gap-1 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3 text-sm">
+            <div key={item.id} className="grid grid-cols-1 gap-1 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 {/* Registret först, den joinade profilen som reserv: joinen bär bara ens EGET
                     namn (profiles är self-read-only), registret bär allas. */}

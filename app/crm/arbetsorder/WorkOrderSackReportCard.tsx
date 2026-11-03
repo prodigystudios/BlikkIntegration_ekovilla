@@ -58,6 +58,8 @@ type Props = {
   /** Per rad, inte en delad flagga: två borttagningar i rad får inte låsa upp varandras knappar. */
   isRemoving: (id: string) => boolean;
   onDelete: (id: string) => void;
+  /** Kortets yta, ovanpå `crm.cardInner` — fältvyn ger det sitt eget kortspråk. */
+  className?: string;
 };
 
 const CHIP_BASE =
@@ -76,6 +78,7 @@ export default function WorkOrderSackReportCard({
   onCreate,
   isRemoving,
   onDelete,
+  className,
 }: Props) {
   const [open, setOpen] = useState(false);
   // Bekräftelsen ställs på raden, inte i en dialog: den som står i ett kryputrymme ska se VILKEN
@@ -133,7 +136,7 @@ export default function WorkOrderSackReportCard({
   }
 
   return (
-    <div className={cn(crm.cardInner, 'grid gap-3')}>
+    <div className={cn(crm.cardInner, 'grid gap-3', className)}>
       <div className="flex items-baseline justify-between gap-3">
         <p className={crm.sectionTitle}>Säckrapport</p>
         {!loading && reports.length > 0 ? (

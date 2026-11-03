@@ -77,6 +77,8 @@ type Props = {
     note: string | null;
     entries: NewProgressEntry[];
   }) => Promise<boolean>;
+  /** Kortets yta, ovanpå `crm.cardInner` — fältvyn ger det sitt eget kortspråk. Kontoret skickar inget. */
+  className?: string;
 };
 
 const CHIP_BASE =
@@ -99,6 +101,7 @@ export default function WorkOrderProgressCard({
   canReport = true,
   saving = false,
   onCreate,
+  className,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -188,7 +191,7 @@ export default function WorkOrderProgressCard({
   }
 
   return (
-    <div className={cn(crm.cardInner, 'grid gap-3')}>
+    <div className={cn(crm.cardInner, 'grid gap-3', className)}>
       <p className={canReport ? crm.sectionTitle : crm.cardTitle}>Framdrift</p>
 
       {/* ⚠️ AVVIKELSEN MÅSTE SYNAS UTAN ATT MAN SCROLLAR. William 2026-09-16: arbete utanför
