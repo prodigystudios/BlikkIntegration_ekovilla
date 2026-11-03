@@ -8,6 +8,7 @@ import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import Meter from '@/components/ui/Meter';
 import {
   groupProgressReports,
+  progressGroupRows,
   progressLocationSuggestions,
   progressMeterRows,
   PROGRESS_UNIT_FALLBACKS,
@@ -129,9 +130,7 @@ export default function WorkOrderProgressCard({
   // Raderna kortet ritar. FÄLTET ser varje sålt moment med en mätare, även de utan rapporter —
   // frågan där är vad som är kvar att bygga (progressMeterRows). KONTORET ser bara det rapporterade,
   // precis som förut: där är ett moment utan rapporter inget att se.
-  const rows = canReport
-    ? progressMeterRows(groups, workItems)
-    : groups.map((group) => ({ key: group.key, label: group.label, unit: group.unit, planned: group.planned, reported: group.reported, percent: null, group }));
+  const rows = canReport ? progressMeterRows(groups, workItems) : progressGroupRows(groups);
   const reportable = workItems.filter((item) => !item.writtenOff);
   const locationSuggestions = progressLocationSuggestions(reports).slice(0, 6);
   // Enhetschips för ett fritextmoment: de enheter ordern faktiskt använder, plus husets vanliga.
@@ -236,7 +235,9 @@ export default function WorkOrderProgressCard({
         <div className="grid gap-3">
           {rows.map((row) => {
             const { group } = row;
-            const remaining = row.planned != null ? Math.max(0, row.planned - row.reported) : null;
+            // ⚠️ Inget "Kvar" på en avskriven rad i fältet: den ska aldrig byggas, och "Kvar 20 m" hade
+            // sagt motsatsen. Kontoret ser talet som förut — där är det en avstämning, inte en uppgift.
+            const remaining = row.planned != null && !(canReport && group?.writtenOff) ? Math.max(0, row.planned - row.reported) : null;
             return (
               <div key={row.key} className="grid gap-1">
                 <div className={cn('flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5', !canReport && 'border-b border-[#e8eee5] pb-1')}>

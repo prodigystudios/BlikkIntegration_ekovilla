@@ -96,9 +96,17 @@ export function materialLabelFromLineItems(lineItems: unknown[] | null | undefin
   for (const it of lineItems) {
     const name = (it as { article_name?: string | null })?.article_name;
     const m = inferMaterialFromArticle(name);
-    if (m) return m.short.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+    if (m) return materialLabelFromShort(m.short);
   }
   return null;
+}
+
+/**
+ * 'KNAUF SUPAFIL' → 'Knauf Supafil'. Materialregistrets kortnamn står i versaler; etiketten skrivs
+ * likadant överallt där materialet visas — planeringstavlan, startsidan och fältvyns säckkort.
+ */
+export function materialLabelFromShort(short: string): string {
+  return short.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 // Free-text match over the fields a planning card actually shows. Shared by the board's search box

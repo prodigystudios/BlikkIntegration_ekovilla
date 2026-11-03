@@ -21,9 +21,9 @@ import { useCustomerContact } from '@/app/crm/arbetsorder/useCustomerContact';
 import { useAssigneeContact } from '@/app/crm/arbetsorder/useAssigneeContact';
 import { formatDate, documentRef, orderLookupRef } from '@/app/crm/lib/format';
 import { inferMaterialFromArticle, totalSacks } from '@/lib/domains/crm/materials';
-import { materialLabelFromLineItems } from '@/lib/domains/planning/display';
 import { materialPill } from '@/components/dashboard/schedule/materialTheme';
 import { callablePhone } from '@/lib/domains/planning/scheduleStops';
+import { materialLabelFromShort } from '@/lib/domains/planning/display';
 import { fieldViewHeading } from './fieldView';
 import FieldHeader, { BackToSchedule } from './_components/FieldHeader';
 import FieldContactsCard from './_components/FieldContactsCard';
@@ -251,11 +251,13 @@ export default function WorkOrderInstallerClient({
   // overflow-x:hidden, så det syns som avklippta kort, inte som en scrollbar. Samma fälla som
   // CRM-sidornas rötter (grid blowout), och samma lagning: minmax(0,1fr) klamrar kolumnen.
   //
-  // `withBar`: knappraden ligger fast över sidans nederkant (52 px + 2 × 12 px), så sidan behöver lika
-  // mycket luft till under det sista kortet — annars går kommentarsfältets Spara inte att nå.
+  // `withBar`: knappraden ligger fast över sidans nederkant (52 px + 2 × 12 px), och felrapportknappen
+  // står ovanför den (ReportIssueLauncher, 5,5 rem upp + 38 px hög ≈ 126 px). Sidan behöver luft till
+  // under BÅDA, annars ligger den lyfta knappen över kommentarsfältets Spara när man scrollat till
+  // botten. Telefonens hemlinje (safe area) täcks redan av body:ns egen padding.
   const page = (children: ReactNode, withBar = false) => (
     <div className="min-h-dvh bg-[var(--ui-surface-muted)]">
-      <div className={cn('mx-auto grid max-w-2xl grid-cols-1 gap-4 px-4 pt-3', withBar ? 'pb-28' : 'pb-10')}>{children}</div>
+      <div className={cn('mx-auto grid max-w-2xl grid-cols-1 gap-4 px-4 pt-3', withBar ? 'pb-36' : 'pb-10')}>{children}</div>
     </div>
   );
 
@@ -305,10 +307,10 @@ export default function WorkOrderInstallerClient({
   const workScope = workOrder.internal_handoff?.work_scope || '';
   const handoffNotes = workOrder.internal_handoff?.handoff_notes || '';
 
-  // Säckkortets huvud. Materialet ur det besättningen SER (etappens rader), som stoppkortet; antalet
-  // ur HELA ordern, eftersom säckboken är per arbetsorder (se WorkOrderSackReportCard).
-  const stageMaterial = materialLabelFromLineItems(scopedLineItems);
-  const sackMaterialTag = stageMaterial ? materialPill(stageMaterial) : null;
+  // Säckkortets huvud: HELA orderns säckar (säckboken är per arbetsorder), och därför HELA orderns
+  // material — samma lista som materialfrågan. Etappens material hade satt "Ekovilla" över en total
+  // som också räknar etapp 2:s Knauf (se WorkOrderSackReportCard, materialTags).
+  const sackMaterialTags = materialOptions.map((short) => materialPill(materialLabelFromShort(short)));
   const orderSacks = totalSacks((workOrder.line_items || []) as never) || null;
 
   const showTimeButton = !canReportTime;
@@ -416,9 +418,9 @@ export default function WorkOrderInstallerClient({
               besättningen fyller i när dagen tar slut. */}
           <WorkOrderSackReportCard
             className={FIELD_SHARED_CARD}
-            plannedSacks={orderSacks}
+            orderSacks={orderSacks}
             staged={Boolean(stage)}
-            materialTag={sackMaterialTag}
+            materialTags={sackMaterialTags}
             openRequest={sackRequest}
             onOpenRequestHandled={() => setSackRequest(0)}
             reports={sackReports.reports}

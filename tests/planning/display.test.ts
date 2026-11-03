@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { workOrderRef, materialLabelFromLineItems, mapWorkOrderJob, matchesJobSearch } from '@/lib/domains/planning/display';
+import { workOrderRef, materialLabelFromLineItems, mapWorkOrderJob, matchesJobSearch, materialLabelFromShort } from '@/lib/domains/planning/display';
 
 describe('workOrderRef', () => {
   it('leads with the Fortnox number when present', () => {
@@ -78,5 +78,13 @@ describe('mapWorkOrderJob', () => {
       total_sacks: 7,
       material: 'Ekovilla',
     });
+  });
+});
+
+describe('materialLabelFromShort', () => {
+  it('skriver registrets versaler som planeringen skriver dem', () => {
+    expect(materialLabelFromShort('EKOVILLA')).toBe('Ekovilla');
+    expect(materialLabelFromShort('KNAUF SUPAFIL')).toBe('Knauf Supafil');
+    expect(materialLabelFromShort('ISOCELL/ISECO')).toBe('Isocell/Iseco');
   });
 });

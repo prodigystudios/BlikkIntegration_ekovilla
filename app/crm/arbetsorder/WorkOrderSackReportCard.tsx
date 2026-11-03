@@ -69,15 +69,21 @@ type Props = {
   onDelete: (id: string) => void;
   /** Kortets yta, ovanpå `crm.cardInner` — fältvyn ger det sitt eget kortspråk. */
   className?: string;
-  /** Hela orderns säckar ur raderna — nämnaren i "45 av 120". null/0 = inget att mäta mot. */
-  plannedSacks?: number | null;
+  /**
+   * HELA orderns säckar ur raderna — nämnaren i "45 av 120". null/0 = inget att mäta mot.
+   * ⚠️ Aldrig etappens: säckboken är per arbetsorder, och "45 av 40" hade fått mätaren att ljuga.
+   */
+  orderSacks?: number | null;
   /** Placeringen utför en etapp: raden säger då "hela ordern", eftersom boken är per order. */
   staged?: boolean;
   /**
-   * Materialetiketten, i stoppkortets färger. null = inget igenkänt material. (Inte `material` —
+   * Materialen totalen räknar, i stoppkortets färger. Tom = inget igenkänt material. (Inte `material` —
    * det namnet bär formulärets svar på materialfrågan.)
+   *
+   * ⚠️ ALLA orderns material, inte det första: "Ekovilla" ovanför "45 av 280" där 80 är Knauf hade
+   * läst som 280 säckar Ekovilla — exakt den sammanblandning lib/domains/crm/materials.ts förbjuder.
    */
-  materialTag?: MaterialPill | null;
+  materialTags?: MaterialPill[];
   /**
    * Räknas upp av fältvyns knapprad ("Rapportera säckar"): kortet scrollar fram och fäller ut
    * formuläret. Kortet kvitterar med `onOpenRequestHandled`, så att en senare montering (flikbyte)
@@ -104,15 +110,17 @@ export default function WorkOrderSackReportCard({
   isRemoving,
   onDelete,
   className,
-  plannedSacks = null,
+  orderSacks = null,
   staged = false,
-  materialTag = null,
+  materialTags = [],
   openRequest = 0,
   onOpenRequestHandled,
 }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
+  // Knappradens begäran väntar på att formuläret renderats innan fokus flyttas in i det.
+  const focusPendingRef = useRef(false);
   // Bekräftelsen ställs på raden, inte i en dialog: den som står i ett kryputrymme ska se VILKEN
   // dag hen tar bort medan hen svarar på frågan. Knapparna är 44 px höga av samma skäl som
   // placeringschipsen.
@@ -129,27 +137,44 @@ export default function WorkOrderSackReportCard({
     if (open && !day) setDay(stockholmTodayISO());
   }, [open, day]);
 
+  // Fokus till formulärets första fråga efter datumet (som redan är ifyllt): första placeringschipset.
+  // BARA på knappradens begäran — där har den som tryckte ingen aning om var formuläret dök upp, och
+  // tangentbord och skärmläsare måste följa med. Kortets egen knapp står redan intill formuläret.
+  function focusFirstChoice() {
+    composerRef.current?.querySelector<HTMLButtonElement>('button[aria-pressed]')?.focus({ preventScroll: true });
+  }
+
   // Knappradens begäran: fram med kortet och öppna formuläret. Spärrat jobb (hasFinal) har ingen
   // knapp i raden, men kortet scrollar ändå fram så att spärrens förklaring syns.
   useEffect(() => {
     if (!openRequest) return;
     onOpenRequestHandled?.();
-    if (!hasFinal) setOpen(true);
+    if (!hasFinal) {
+      // Redan öppet: formuläret finns, fokus direkt. Annars när det renderats (effekten nedan).
+      if (open) focusFirstChoice();
+      else {
+        focusPendingRef.current = true;
+        setOpen(true);
+      }
+    }
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     rootRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reagerar BARA på en ny begäran
   }, [openRequest]);
 
-  // Fokus in i formuläret när det öppnats från knappraden, så tangentbord och skärmläsare följer med.
-  // Första placeringschipset — det är formulärets första fråga efter datumet, som redan är ifyllt.
   useEffect(() => {
-    if (open) composerRef.current?.querySelector<HTMLButtonElement>('button[aria-pressed]')?.focus({ preventScroll: true });
+    if (open && focusPendingRef.current) {
+      focusPendingRef.current = false;
+      focusFirstChoice();
+    }
   }, [open]);
 
   const groups = groupSackReportsByConstruction(reports);
   const total = totalReportedSacks(reports);
+  // Stoppkortets regel och etikett ("Rapporterat hela ordern" på en etapp). Nämnaren blir orderns
+  // säckar i båda fallen: utan etapp ÄR placeringen hela ordern.
   const progress = reportedProgress(
-    { plannedSacks: plannedSacks || null, orderSacks: staged ? plannedSacks || null : null, staged, reported: total },
+    { plannedSacks: orderSacks || null, orderSacks: staged ? orderSacks || null : null, staged, reported: total },
     false,
   );
   const needsMaterial = materialOptions.length > 1;
@@ -192,10 +217,14 @@ export default function WorkOrderSackReportCard({
     <div ref={rootRef} className={cn(crm.cardInner, 'grid scroll-mt-3 gap-3', className)}>
       <div className="flex items-center justify-between gap-3">
         <p className={crm.fieldSectionTitle}>Säckrapport</p>
-        {materialTag ? (
-          <span className={cn('inline-flex shrink-0 items-center gap-1.5 rounded-full px-[9px] py-[3px] text-xs font-semibold', materialTag.className)}>
-            <span aria-hidden="true" className={cn('h-[7px] w-[7px] rounded-full', materialTag.dotClassName)} />
-            {materialTag.label}
+        {materialTags.length > 0 ? (
+          <span className="flex flex-wrap justify-end gap-1.5">
+            {materialTags.map((tag) => (
+              <span key={tag.label} className={cn('inline-flex shrink-0 items-center gap-1.5 rounded-full px-[9px] py-[3px] text-xs font-semibold', tag.className)}>
+                <span aria-hidden="true" className={cn('h-[7px] w-[7px] rounded-full', tag.dotClassName)} />
+                {tag.label}
+              </span>
+            ))}
           </span>
         ) : null}
       </div>

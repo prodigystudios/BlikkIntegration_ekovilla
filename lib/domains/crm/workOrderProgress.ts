@@ -371,10 +371,21 @@ export type ProgressMeterRow<T> = {
   unit: string | null;
   planned: number | null;
   reported: number;
-  /** Andel av det sålda, 0–100. null när det inte finns något sålt antal att mäta mot. */
+  /**
+   * Andel av det sålda, 0–100. null när det inte finns något sålt antal att mäta mot — eller när raden
+   * är avskriven: en mätare på den läses som jobb kvar att bygga, och det ska den aldrig byggas.
+   */
   percent: number | null;
   group: ProgressGroup<T> | null;
 };
+
+/**
+ * Grupperna som rader UTAN mätare — kontorets läsvy, som bara visar det rapporterade. Samma form som
+ * progressMeterRows, så kortet har en renderingsväg och de två inte kan glida isär.
+ */
+export function progressGroupRows<T>(groups: Array<ProgressGroup<T>>): Array<ProgressMeterRow<T>> {
+  return groups.map((group) => ({ key: group.key, label: group.label, unit: group.unit, planned: group.planned, reported: group.reported, percent: null, group }));
+}
 
 /**
  * Fältvyns momentlista: ett per SÅLT moment i orderns ordning — även de utan rapporter, "0 av 24 m" —
@@ -390,8 +401,8 @@ export type ProgressMeterRow<T> = {
  */
 export function progressMeterRows<T>(groups: Array<ProgressGroup<T>>, workItems: ProgressWorkItem[]): Array<ProgressMeterRow<T>> {
   const byKey = new Map(groups.map((group) => [group.key, group]));
-  const percent = (reported: number, planned: number | null) =>
-    planned != null && planned > 0 ? Math.min(100, (reported / planned) * 100) : null;
+  const percent = (reported: number, planned: number | null, writtenOff: boolean) =>
+    !writtenOff && planned != null && planned > 0 ? Math.min(100, (reported / planned) * 100) : null;
   const rows: Array<ProgressMeterRow<T>> = [];
   const shown = new Set<string>();
 
@@ -403,11 +414,11 @@ export function progressMeterRows<T>(groups: Array<ProgressGroup<T>>, workItems:
     shown.add(key);
     const planned = group ? group.planned : item.planned;
     const reported = group ? group.reported : 0;
-    rows.push({ key, label: group?.label ?? item.label, unit: group?.unit ?? item.unit, planned, reported, percent: percent(reported, planned), group });
+    rows.push({ key, label: group?.label ?? item.label, unit: group?.unit ?? item.unit, planned, reported, percent: percent(reported, planned, item.writtenOff), group });
   }
   for (const group of groups) {
     if (shown.has(group.key)) continue;
-    rows.push({ key: group.key, label: group.label, unit: group.unit, planned: group.planned, reported: group.reported, percent: percent(group.reported, group.planned), group });
+    rows.push({ key: group.key, label: group.label, unit: group.unit, planned: group.planned, reported: group.reported, percent: percent(group.reported, group.planned, group.writtenOff), group });
   }
   return rows;
 }

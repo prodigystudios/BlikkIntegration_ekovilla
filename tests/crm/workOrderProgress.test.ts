@@ -3,6 +3,7 @@ import {
   groupProgressReports,
   normalizeLocationKey,
   progressLocationSuggestions,
+  progressGroupRows,
   progressMeterRows,
   progressWorkItemsFromLineItems,
   resolveProgressEntry,
@@ -370,6 +371,8 @@ describe('progressMeterRows', () => {
     const row = progressMeterRows(groups, withWrittenOff).find((r) => r.label === 'Avskriven landgång');
     expect(row).toMatchObject({ reported: 10, planned: 30 });
     expect(row?.group?.writtenOff).toBe(true);
+    // Ingen mätare: en tredjedels mätare på en avskriven rad läses som 20 m kvar att bygga.
+    expect(row?.percent).toBeNull();
   });
 
   it('lägger avvikelserna efter orderns moment', () => {
@@ -385,5 +388,18 @@ describe('progressMeterRows', () => {
 
   it('ger en tom lista när ordern varken har moment eller rapporter', () => {
     expect(progressMeterRows([], [])).toEqual([]);
+  });
+});
+
+describe('progressGroupRows', () => {
+  it('ger kontoret bara det rapporterade, utan mätare', () => {
+    const workItems: ProgressWorkItem[] = [
+      { lineItemId: 'a', label: 'Landgång', unit: 'm', planned: 120, writtenOff: false },
+      { lineItemId: 'b', label: 'Brandmatta', unit: 'st', planned: 4, writtenOff: false },
+    ];
+    const groups = groupProgressReports([ROW({ line_item_id: 'b', quantity: 2 })], workItems);
+    expect(progressGroupRows(groups)).toEqual([
+      expect.objectContaining({ label: 'Brandmatta', reported: 2, planned: 4, percent: null }),
+    ]);
   });
 });
