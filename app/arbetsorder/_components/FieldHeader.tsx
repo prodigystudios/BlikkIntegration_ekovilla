@@ -7,23 +7,31 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { telHref } from '@/app/crm/components/ContactLinks';
 import { mapsSearchHref } from '@/lib/domains/planning/scheduleStops';
-import type { FieldViewHeading } from '../fieldView';
+import { canStepBackInApp, type FieldViewHeading } from '../fieldView';
 import { ChevronLeftIcon, FIELD_FOCUS_RING as FOCUS_RING, PhoneIcon, PinIcon } from './fieldUi';
 
 /**
  * "‹ Mitt schema" — tillbaka dit man kom ifrån, eller till startsidan.
  *
- * ⚠️ EN LÄNK, INTE EN KNAPP. Ett vanligt klick med historik i appen går BAKÅT (schemat eller Mina jobb,
- * med scrollen kvar) — precis som den gamla "← Tillbaka". Utan historik — en ny flik, appen öppnad
- * från en notis — finns inget bakåt, och då är länkens eget mål startsidan, där schemat står. En
- * <button onClick={router.back}> hade gjort ingenting i det läget, och tappat mittenklick.
+ * ⚠️ EN LÄNK, INTE EN KNAPP. Ett vanligt klick går BAKÅT när föregående sida bevisligen är appens
+ * (canStepBackInApp) — schemat eller Mina jobb, med scrollen kvar. Annars — en ny flik, en länk ur ett
+ * mejl, appen öppnad från en notis — följer klicket länkens eget mål, startsidan, där schemat står. En
+ * <button onClick={router.back}> hade backat ut ur appen i de fallen, och tappat mittenklick.
  */
 export function BackToSchedule() {
   const router = useRouter();
   function onClick(event: MouseEvent<HTMLAnchorElement>) {
     // Mittenklick, ⌘/Ctrl-klick och shift: låt webbläsaren öppna länken som vanligt.
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    if (window.history.length <= 1) return;
+    // Adressen dokumentet laddades på. Skiljer den sig från den vi står på kom vi hit inom appen.
+    const navigation = performance.getEntriesByType?.('navigation')[0] as PerformanceNavigationTiming | undefined;
+    const back = canStepBackInApp({
+      origin: window.location.origin,
+      referrer: document.referrer,
+      documentUrl: navigation?.name ?? null,
+      currentUrl: window.location.href,
+    });
+    if (!back) return;
     event.preventDefault();
     router.back();
   }

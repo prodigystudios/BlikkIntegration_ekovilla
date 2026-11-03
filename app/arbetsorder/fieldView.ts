@@ -14,7 +14,7 @@ type WorkAddress = {
 export type FieldViewHeading = {
   /** H1. Gatuadressen, eller projektnamnet när ordern saknar gata. */
   title: string;
-  /** Postnummer och ort. null när båda saknas. */
+  /** Postnummer och ort, med mellanslag som på ett kuvert ("814 30 Skutskär"). null när båda saknas. */
   place: string | null;
   /** Projektnamnet som egen rad — bara när gatan är rubrik och namnet säger något mer. */
   project: string | null;
@@ -37,9 +37,12 @@ const clean = (value: string | null | undefined) => (value || '').trim() || null
  */
 export function fieldViewHeading(projectName: string | null | undefined, address: WorkAddress): FieldViewHeading {
   const street = clean(address?.street_address);
-  const place = clean(joinAddress([address?.postal_code, address?.city]));
+  const postal = clean(address?.postal_code);
+  const city = clean(address?.city);
+  const place = [postal, city].filter(Boolean).join(' ') || null;
   const name = clean(projectName);
-  const full = joinAddress([street, place]);
+  // Kommaseparerad för kartsökningen och jämförelsen med projektnamnet — samma form som stoppkortet.
+  const full = joinAddress([street, postal, city]);
   return {
     title: street ?? name ?? 'Arbetsorder',
     place,
@@ -50,11 +53,30 @@ export function fieldViewHeading(projectName: string | null | undefined, address
 }
 
 /**
- * Numret om det går att ringa, annars null.
+ * Kan "‹ Mitt schema" gå ETT STEG BAKÅT utan att lämna appen? Annars är länkens mål startsidan.
  *
- * Telefonfälten är fritext. "Ring växeln" blir `tel:` utan siffror — en Ring-knapp som inte ringer
- * någonstans. Samma kontroll som stoppkortets stopCallLine.
+ * Bakåt är bättre när det går: man landar där man var — schemat eller Mina jobb — med scrollen kvar.
+ * Men `history.length > 1` säger bara att det finns historik, inte vems: en länk ur Gmail i en flik
+ * med historik hade backat ut ur appen. Två fall räknas som säkra:
+ *
+ * 1. Man kom hit med en navigering INOM appen (en <Link>). Dokumentet laddades då på en annan adress
+ *    än den man står på, så föregående post är appens egen.
+ * 2. Sidan laddades hårt (stoppkortets <a href>) från en av våra egna sidor.
+ *
+ * ⚠️ INLOGGNINGEN RÄKNAS ALDRIG. Den laddar om hela sidan efter lyckad inloggning, så en länk öppnad
+ * utloggad har /auth som föregående sida — och bakåt dit är fel i båda riktningar. Allt osäkert faller
+ * till startsidan, där schemat står: ett falskt nej kostar bara scrollpositionen.
  */
-export function callablePhone(phone: string | null | undefined): string | null {
-  return phone && /\d/.test(phone) ? phone : null;
+export function canStepBackInApp(input: { origin: string; referrer: string; documentUrl: string | null; currentUrl: string }): boolean {
+  const parse = (value: string | null) => {
+    if (!value) return null;
+    try { return new URL(value); } catch { return null; }
+  };
+  const loaded = parse(input.documentUrl);
+  const current = parse(input.currentUrl);
+  if (loaded && current && loaded.pathname !== current.pathname) {
+    return !loaded.pathname.startsWith('/auth');
+  }
+  const referrer = parse(input.referrer);
+  return !!referrer && referrer.origin === input.origin && !referrer.pathname.startsWith('/auth');
 }

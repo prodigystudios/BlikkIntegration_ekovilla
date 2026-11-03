@@ -98,8 +98,9 @@ export function TabsTrigger({ className, active = false, variant = 'pill', child
         variant === 'underline' && '-mb-px inline-flex min-h-11 items-center gap-2 rounded-none border-0 border-b-2 bg-transparent px-1 py-0 text-sm',
         variant === 'underline' && active && 'border-[color:var(--ek-green)] font-semibold text-slate-900',
         variant === 'underline' && !active && 'border-transparent font-medium text-slate-600 hover:text-slate-900',
-        // `px-2 py-0` mot den globala knapp-paddingen. Ingen hovring: spåret är en telefonyta.
-        variant === 'segmented' && 'inline-flex h-10 min-w-0 items-center justify-center rounded-[10px] border-0 px-2 py-0 text-sm font-semibold',
+        // `px-2 py-0` mot den globala knapp-paddingen. Ingen hovring: spåret är en telefonyta. Fokusringen
+        // i full accent: basens 20 %-ring syns inte mot det grå spåret.
+        variant === 'segmented' && 'inline-flex h-10 min-w-0 items-center justify-center rounded-[10px] border-0 px-2 py-0 text-sm font-semibold focus-visible:ring-[color:var(--ek-accent)]',
         variant === 'segmented' && active && 'bg-white text-slate-900 shadow-[0_1px_2px_rgba(15,23,42,0.08)]',
         variant === 'segmented' && !active && 'bg-transparent text-slate-600',
         className,

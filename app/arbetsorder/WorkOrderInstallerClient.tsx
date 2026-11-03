@@ -22,7 +22,8 @@ import { useCustomerContact } from '@/app/crm/arbetsorder/useCustomerContact';
 import { useAssigneeContact } from '@/app/crm/arbetsorder/useAssigneeContact';
 import { formatDate, documentRef, orderLookupRef } from '@/app/crm/lib/format';
 import { inferMaterialFromArticle } from '@/lib/domains/crm/materials';
-import { callablePhone, fieldViewHeading } from './fieldView';
+import { callablePhone } from '@/lib/domains/planning/scheduleStops';
+import { fieldViewHeading } from './fieldView';
 import FieldHeader, { BackToSchedule } from './_components/FieldHeader';
 import FieldContactsCard from './_components/FieldContactsCard';
 import FieldBeforeLeavingCard from './_components/FieldBeforeLeavingCard';
@@ -85,9 +86,9 @@ function useFieldStage(workOrderId: string, segmentId: string | null) {
  * 🧨 Utan den blir beskärningen tyst, och en tyst beskärning är värre än ingen: besättningen ser en
  * kortare order och har inget sätt att veta om det är etappen eller ett fel i underlaget.
  *
- * Står ovanför flikarna, alltså på VARJE flik — Info och Artiklar är båda beskurna, och man kan stå på
- * Artiklar utan att ha varit på Info. Etappens arbetsbeskrivning bor i "Att göra" på Info-fliken; här
- * hade den skjutit flikraden upp och ner vid varje flikbyte.
+ * Överst på Info OCH Artiklar — de två flikar som är beskurna, och man kan stå på Artiklar utan att ha
+ * varit på Info. ⚠️ ALDRIG ovanför flikraden: där hade den stått på Filer och Tid också, som visar HELA
+ * ordern, och sagt att något är dolt där inget är det. Etappens arbetsbeskrivning bor i "Att göra".
  */
 function StageBanner({ stage }: { stage: FieldStage }) {
   return (
@@ -337,12 +338,6 @@ export default function WorkOrderInstallerClient({
         phone={callablePhone(contact.phone)}
       />
 
-      {/* 🧨 ETAPPEN MÅSTE SÄGAS RAKT UT. Beskärningen tar bort rader ur artikellistan och ur
-          materialvalet; syns inte VARFÖR läser besättningen en kortare order som om det vore hela
-          jobbet — och den som saknar en rad tror att kontoret glömt den. Banderollen säger både vilken
-          del de har och att resten finns. */}
-      {stage ? <StageBanner stage={stage} /> : null}
-
       {/* Filfliken bär antalet först när listan är hämtad — den hämtas när fliken öppnas, inte innan
           (se useWorkOrderFiles ovan). Ett antal före det hade varit en gissning. */}
       <TabsList
@@ -353,7 +348,8 @@ export default function WorkOrderInstallerClient({
           <TabsTrigger
             key={value}
             id={`field-tab-${value}`}
-            aria-controls={`field-panel-${value}`}
+            // Bara den aktiva panelen finns i DOM:en — en pekare till en panel som inte renderats är fel.
+            aria-controls={activeTab === value ? `field-panel-${value}` : undefined}
             variant="segmented"
             active={activeTab === value}
             onClick={() => setActiveTab(value)}
@@ -370,6 +366,12 @@ export default function WorkOrderInstallerClient({
           som görs innan man åker, och sist kommentarerna (dit en @-notis landar). */}
       {activeTab === 'info' ? (
         <div role="tabpanel" id="field-panel-info" aria-labelledby="field-tab-info" className="grid grid-cols-1 gap-4">
+          {/* 🧨 ETAPPEN MÅSTE SÄGAS RAKT UT. Beskärningen tar bort rader ur artikellistan och ur
+              materialvalet; syns inte VARFÖR läser besättningen en kortare order som om det vore hela
+              jobbet — och den som saknar en rad tror att kontoret glömt den. Banderollen säger både
+              vilken del de har och att resten finns. */}
+          {stage ? <StageBanner stage={stage} /> : null}
+
           <section className={cn(FIELD_CARD, 'grid gap-3')} aria-labelledby="field-todo-title">
             <h2 id="field-todo-title" className={FIELD_SECTION_TITLE}>Att göra</h2>
             {/* Etappens egen arbetsbeskrivning står FÖRE orderns: den är skriven för just den här
@@ -488,10 +490,12 @@ export default function WorkOrderInstallerClient({
         </div>
       ) : null}
 
-      {/* Articles (read-only). Etappbanderollen står ovanför flikarna och gäller här också — listan
-          nedan är beskuren till etappen. */}
+      {/* Articles (read-only) */}
       {activeTab === 'articles' ? (
         <div role="tabpanel" id="field-panel-articles" aria-labelledby="field-tab-articles" className="grid grid-cols-1 gap-3">
+          {/* ⚠️ BANDEROLLEN MÅSTE FINNAS HÄR OCKSÅ. Listan nedan är beskuren till etappen, och man kan
+              stå här utan att ha varit på Info. */}
+          {stage ? <StageBanner stage={stage} /> : null}
           <WorkOrderArticles
             items={scopedLineItems}
             currencyCode={workOrder.currency_code}

@@ -2,7 +2,7 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { telHref } from '@/app/crm/components/ContactLinks';
-import { callablePhone } from '../fieldView';
+import { callablePhone } from '@/lib/domains/planning/scheduleStops';
 import { FIELD_CARD, FIELD_DIVIDER, FIELD_FOCUS_RING, FIELD_SECTION_TITLE, PhoneIcon } from './fieldUi';
 
 type Contact = {

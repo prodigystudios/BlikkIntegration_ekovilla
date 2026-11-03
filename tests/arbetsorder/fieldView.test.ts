@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { callablePhone, fieldViewHeading } from '@/app/arbetsorder/fieldView';
+import { canStepBackInApp, fieldViewHeading } from '@/app/arbetsorder/fieldView';
 
 // Fältvyns huvud: gatan som rubrik, projektnamnet bara när det säger något mer.
 
@@ -7,7 +7,8 @@ describe('fieldViewHeading', () => {
   it('gör gatan till rubrik och postnummer + ort till raden under', () => {
     const heading = fieldViewHeading('Vindsisolering', { street_address: 'Strandgatan 9', postal_code: '814 30', city: 'Skutskär' });
     expect(heading.title).toBe('Strandgatan 9');
-    expect(heading.place).toBe('814 30, Skutskär');
+    // Mellanslag som på ett kuvert, inte komma.
+    expect(heading.place).toBe('814 30 Skutskär');
     expect(heading.mapsQuery).toBe('Strandgatan 9, 814 30, Skutskär');
   });
 
@@ -43,14 +44,36 @@ describe('fieldViewHeading', () => {
   });
 });
 
-describe('callablePhone', () => {
-  it('släpper igenom ett nummer med siffror', () => {
-    expect(callablePhone('070-123 45 67')).toBe('070-123 45 67');
+describe('canStepBackInApp', () => {
+  const origin = 'https://app.ekovilla.se';
+  const here = `${origin}/arbetsorder/abc?segment=s1`;
+
+  it('backar efter en navigering inom appen (dokumentet laddades på en annan adress)', () => {
+    expect(canStepBackInApp({ origin, referrer: '', documentUrl: `${origin}/mina-jobb`, currentUrl: here })).toBe(true);
+    expect(canStepBackInApp({ origin, referrer: 'https://mail.google.com/', documentUrl: `${origin}/`, currentUrl: here })).toBe(true);
   });
 
-  it('stoppar fritext utan siffror, som annars blir en tel:-länk som inte ringer', () => {
-    expect(callablePhone('ring växeln')).toBeNull();
-    expect(callablePhone('')).toBeNull();
-    expect(callablePhone(null)).toBeNull();
+  it('backar efter en hård laddning från en av våra egna sidor (stoppkortets <a href>)', () => {
+    expect(canStepBackInApp({ origin, referrer: `${origin}/`, documentUrl: here, currentUrl: here })).toBe(true);
+  });
+
+  it('backar inte ut ur appen — länk ur ett mejl, en notis, en ny flik', () => {
+    expect(canStepBackInApp({ origin, referrer: 'https://mail.google.com/', documentUrl: here, currentUrl: here })).toBe(false);
+    expect(canStepBackInApp({ origin, referrer: '', documentUrl: here, currentUrl: here })).toBe(false);
+    expect(canStepBackInApp({ origin, referrer: '', documentUrl: null, currentUrl: here })).toBe(false);
+  });
+
+  it('backar aldrig till inloggningen, varken efter omladdningen eller en klientnavigering därifrån', () => {
+    // Inloggningen laddar om hela sidan: föregående sida är /auth/sign-in.
+    expect(canStepBackInApp({ origin, referrer: `${origin}/auth/sign-in?next=%2Farbetsorder%2Fabc`, documentUrl: here, currentUrl: here })).toBe(false);
+    expect(canStepBackInApp({ origin, referrer: '', documentUrl: `${origin}/auth/sign-in`, currentUrl: here })).toBe(false);
+  });
+
+  it('räknar en flik- eller sökparameterändring på samma sida som samma dokument', () => {
+    expect(canStepBackInApp({ origin, referrer: '', documentUrl: `${origin}/arbetsorder/abc`, currentUrl: here })).toBe(false);
+  });
+
+  it('klarar trasiga värden utan att kasta', () => {
+    expect(canStepBackInApp({ origin, referrer: 'inte en adress', documentUrl: 'inte heller', currentUrl: here })).toBe(false);
   });
 });

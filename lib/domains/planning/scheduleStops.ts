@@ -253,7 +253,7 @@ export function reportedProgress(
  * siffror — en Ring-länk som inte ringer någonstans.
  */
 export function stopCallLine(contact: StopCallContact, customer: string | null | undefined): { label: string; note: string | null } | null {
-  if (!/\d/.test(contact.phone || '')) return null;
+  if (!callablePhone(contact.phone)) return null;
   const name = contact.contactName?.trim() || null;
   if (contact.isOnSiteContact) {
     return {
@@ -263,6 +263,17 @@ export function stopCallLine(contact: StopCallContact, customer: string | null |
   }
   const fallback = (customer || '').trim() || null;
   return { label: name || fallback ? `Ring ${name || fallback}` : 'Ring kunden', note: null };
+}
+
+/**
+ * Numret om det går att ringa, annars null.
+ *
+ * Telefonfälten är fritext. "Ring växeln" blir `tel:` utan siffror — en Ring-länk som inte ringer
+ * någonstans. EN regel för båda ytorna som ringer kunden: stoppkortet (stopCallLine ovan) och
+ * fältvyns Ring kund.
+ */
+export function callablePhone(phone: string | null | undefined): string | null {
+  return phone && /\d/.test(phone) ? phone : null;
 }
 
 /** Vägbeskrivningen. Samma URL-mönster som den äldre detaljmodalens "Öppna i Kartor". */
