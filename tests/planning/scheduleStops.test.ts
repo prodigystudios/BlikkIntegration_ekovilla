@@ -12,6 +12,7 @@ import {
   scheduleRowRef,
   scheduleStopMeta,
   stopCallLine,
+  callablePhone,
   workdayPosition,
   workOrderHref,
 } from '@/lib/domains/planning/scheduleStops';
@@ -369,5 +370,17 @@ describe('reportedProgress', () => {
 describe('mapsSearchHref', () => {
   it('kodar adressen', () => {
     expect(mapsSearchHref('Strandgatan 9, Skutskär')).toBe('https://www.google.com/maps/search/?api=1&query=Strandgatan%209%2C%20Skutsk%C3%A4r');
+  });
+});
+
+describe('callablePhone', () => {
+  it('släpper igenom ett nummer med siffror', () => {
+    expect(callablePhone('070-123 45 67')).toBe('070-123 45 67');
+  });
+
+  it('stoppar fritext utan siffror, som annars blir en tel:-länk som inte ringer', () => {
+    expect(callablePhone('ring växeln')).toBeNull();
+    expect(callablePhone('')).toBeNull();
+    expect(callablePhone(null)).toBeNull();
   });
 });
