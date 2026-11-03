@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { formatDate, formatSacks, parseQuantityInput } from '@/app/crm/lib/format';
+import Meter from '@/components/ui/Meter';
+import type { MaterialPill } from '@/components/dashboard/schedule/materialTheme';
 import { CONSTRUCTIONS, type ConstructionSlug } from '@/lib/domains/crm/constructions';
 import { groupSackReportsByConstruction, totalReportedSacks } from '@/lib/domains/planning/sackLedger';
+import { reportedProgress } from '@/lib/domains/planning/scheduleStops';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import type { SackReportView } from '@/lib/domains/planning/reports';
 import type { NewSackReportEntry } from './useSackReports';
@@ -22,11 +25,17 @@ import type { NewSackReportEntry } from './useSackReports';
 // tappa två chips, få två sifferrutor. Planen kräver flera placeringar i en submit just för att en
 // POST slår tre på ett tak med dålig täckning.
 //
-// ── VAD KORTET MEDVETET INTE VISAR ───────────────────────────────────────────
-// Det PLANERADE antalet. Tre tal har tre roller: offertradernas antal är säljarens UPPSKATTNING på
-// en densitet vi vill hålla, delrapporten är vad som faktiskt blåstes, egenkontrollen är totalen.
-// Ett "av 130 planerade" bredvid inmatningsrutan hade bjudit in installatören att få talen att gå
-// ihop. Det planerade talet hör hemma på kontorets order, inte här.
+// ── DET PLANERADE ANTALET — NEDTONAT, OCH ALDRIG VID INMATNINGEN ──────────────
+// Tre tal har tre roller: offertradernas antal är säljarens UPPSKATTNING på en densitet vi vill
+// hålla, delrapporten är vad som faktiskt blåstes, egenkontrollen är totalen. Kortet gömde därför
+// det planerade talet helt — ett "av 130 planerade" bredvid inmatningsrutan hade bjudit in
+// installatören att få talen att gå ihop.
+//
+// William 2026-11-03: visa "45 av 120" med mätare, som startsidans stoppkort redan gör — men
+// NEDTONAT, inte som designens stora siffra. Raden står ovanför listan och är borta när formuläret
+// används (den visas bara när något redan är rapporterat), och den är aldrig ett mål att räkna mot.
+// Nämnaren är ALLTID hela orderns säckar (reportedProgress): säckboken är per arbetsorder, så "45 av
+// 40" där 40 bara var etappens hade fått mätaren att ljuga.
 //
 // ── ÅNGERKNAPPEN, OCH VARFÖR DEN SITTER HÄR ─────────────────────────────────
 // 2026-08-24 rapporterade två installatörer med dålig mottagning samma dag två gånger: Spara såg
@@ -60,6 +69,22 @@ type Props = {
   onDelete: (id: string) => void;
   /** Kortets yta, ovanpå `crm.cardInner` — fältvyn ger det sitt eget kortspråk. */
   className?: string;
+  /** Hela orderns säckar ur raderna — nämnaren i "45 av 120". null/0 = inget att mäta mot. */
+  plannedSacks?: number | null;
+  /** Placeringen utför en etapp: raden säger då "hela ordern", eftersom boken är per order. */
+  staged?: boolean;
+  /**
+   * Materialetiketten, i stoppkortets färger. null = inget igenkänt material. (Inte `material` —
+   * det namnet bär formulärets svar på materialfrågan.)
+   */
+  materialTag?: MaterialPill | null;
+  /**
+   * Räknas upp av fältvyns knapprad ("Rapportera säckar"): kortet scrollar fram och fäller ut
+   * formuläret. Kortet kvitterar med `onOpenRequestHandled`, så att en senare montering (flikbyte)
+   * inte öppnar formuläret igen på en gammal begäran.
+   */
+  openRequest?: number;
+  onOpenRequestHandled?: () => void;
 };
 
 const CHIP_BASE =
@@ -79,8 +104,15 @@ export default function WorkOrderSackReportCard({
   isRemoving,
   onDelete,
   className,
+  plannedSacks = null,
+  staged = false,
+  materialTag = null,
+  openRequest = 0,
+  onOpenRequestHandled,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   // Bekräftelsen ställs på raden, inte i en dialog: den som står i ett kryputrymme ska se VILKEN
   // dag hen tar bort medan hen svarar på frågan. Knapparna är 44 px höga av samma skäl som
   // placeringschipsen.
@@ -97,8 +129,29 @@ export default function WorkOrderSackReportCard({
     if (open && !day) setDay(stockholmTodayISO());
   }, [open, day]);
 
+  // Knappradens begäran: fram med kortet och öppna formuläret. Spärrat jobb (hasFinal) har ingen
+  // knapp i raden, men kortet scrollar ändå fram så att spärrens förklaring syns.
+  useEffect(() => {
+    if (!openRequest) return;
+    onOpenRequestHandled?.();
+    if (!hasFinal) setOpen(true);
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    rootRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reagerar BARA på en ny begäran
+  }, [openRequest]);
+
+  // Fokus in i formuläret när det öppnats från knappraden, så tangentbord och skärmläsare följer med.
+  // Första placeringschipset — det är formulärets första fråga efter datumet, som redan är ifyllt.
+  useEffect(() => {
+    if (open) composerRef.current?.querySelector<HTMLButtonElement>('button[aria-pressed]')?.focus({ preventScroll: true });
+  }, [open]);
+
   const groups = groupSackReportsByConstruction(reports);
   const total = totalReportedSacks(reports);
+  const progress = reportedProgress(
+    { plannedSacks: plannedSacks || null, orderSacks: staged ? plannedSacks || null : null, staged, reported: total },
+    false,
+  );
   const needsMaterial = materialOptions.length > 1;
 
   // ⚠️ STRIKT PARSNING. `parseDecimal` faller tillbaka på 0, så "abv" hade blivit en riktig
@@ -136,15 +189,30 @@ export default function WorkOrderSackReportCard({
   }
 
   return (
-    <div className={cn(crm.cardInner, 'grid gap-3', className)}>
-      <div className="flex items-baseline justify-between gap-3">
-        <p className={crm.sectionTitle}>Säckrapport</p>
-        {!loading && reports.length > 0 ? (
-          <p className="m-0 text-sm font-semibold text-slate-900">
-            {formatSacks(total)} <span className="text-xs font-medium text-slate-500">säckar totalt</span>
-          </p>
+    <div ref={rootRef} className={cn(crm.cardInner, 'grid scroll-mt-3 gap-3', className)}>
+      <div className="flex items-center justify-between gap-3">
+        <p className={crm.fieldSectionTitle}>Säckrapport</p>
+        {materialTag ? (
+          <span className={cn('inline-flex shrink-0 items-center gap-1.5 rounded-full px-[9px] py-[3px] text-xs font-semibold', materialTag.className)}>
+            <span aria-hidden="true" className={cn('h-[7px] w-[7px] rounded-full', materialTag.dotClassName)} />
+            {materialTag.label}
+          </span>
         ) : null}
       </div>
+
+      {/* Nedtonat med flit — se kortets huvud. Samma etikett och nämnare som stoppkortet. */}
+      {!loading && !loadError && progress ? (
+        <div className="grid gap-1.5">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-[13px] text-slate-600">{progress.label}</span>
+            <span className="text-sm font-semibold tabular-nums text-slate-900">
+              {formatSacks(total)}
+              {progress.of ? <span className="font-medium text-slate-600"> av {formatSacks(progress.of)}</span> : null} säckar
+            </span>
+          </div>
+          {progress.percent != null ? <Meter percent={progress.percent} className="h-1.5 w-full" /> : null}
+        </div>
+      ) : null}
 
       {loading ? (
         <p className="m-0 text-sm text-slate-400">Hämtar…</p>
@@ -228,16 +296,20 @@ export default function WorkOrderSackReportCard({
           genom att lämna in egenkontrollen på nytt.
         </p>
       ) : !open ? (
+        // Vit med kant: den fyllda "Rapportera säckar" sitter i fältvyns knapprad längst ner och
+        // öppnar samma formulär. Två fyllda gröna knappar för samma sak hade bara konkurrerat.
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="inline-flex h-11 w-full items-center justify-center rounded-xl text-sm font-semibold text-white transition active:scale-[0.99]"
-          style={{ backgroundColor: 'var(--ek-green)' }}
+          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-solid border-[color:var(--ek-accent-soft-border)] bg-white px-4 py-0 text-[15px] font-semibold text-[color:var(--ek-green)] transition active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ek-accent)]"
         >
+          <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true" focusable="false">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
           Rapportera dagens säckar
         </button>
       ) : (
-        <div className="grid gap-3 rounded-xl border border-[#dce4d8] bg-white p-3">
+        <div ref={composerRef} className="grid gap-3 rounded-xl border border-[#dce4d8] bg-white p-3">
           <div>
             <label className={crm.label} htmlFor="sack-report-day">Datum</label>
             <input

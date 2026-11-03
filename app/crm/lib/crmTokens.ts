@@ -173,6 +173,10 @@ export const crm = {
   // på 11px/700/0.12em — den grövre vikten, som versalerna bär bättre.
   // ⚠️ Raden syns i 102 anrop i 35 filer, inte bara på översikten.
   sectionTitle: 'text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500',
+  // Fältvyns kortrubrik (/arbetsorder, telefon i handske): samma roll som `sectionTitle`, men 13 px —
+  // ingen text under 12 px där (INSTALLATOR_UX_UPPGRADERING_PLAN.md). Bor här och inte i fältvyns egen
+  // mapp för att korten som delas med kontoret (säckar, framdrift) bär den i sin fältvariant.
+  fieldSectionTitle: 'm-0 text-[13px] font-semibold uppercase tracking-[0.02em] text-slate-600',
   // Nivån MELLAN kortets kicker och fältetiketten: en namngiven fältgrupp inne på ett kort
   // (adresskolumnerna på kundkortet är fallet den skrevs för).
   //

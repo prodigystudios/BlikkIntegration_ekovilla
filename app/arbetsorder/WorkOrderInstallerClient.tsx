@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import Link from 'next/link';
 import { cn } from '@/lib/shared/cn';
 import { workOrderStatusLabel, workOrderStatusClass } from '@/app/crm/lib/crmTokens';
 import { TabsList, TabsTrigger } from '@/components/ui/Tabs';
@@ -21,12 +20,15 @@ import { useWorkOrderFiles } from '@/app/crm/arbetsorder/useWorkOrderFiles';
 import { useCustomerContact } from '@/app/crm/arbetsorder/useCustomerContact';
 import { useAssigneeContact } from '@/app/crm/arbetsorder/useAssigneeContact';
 import { formatDate, documentRef, orderLookupRef } from '@/app/crm/lib/format';
-import { inferMaterialFromArticle } from '@/lib/domains/crm/materials';
+import { inferMaterialFromArticle, totalSacks } from '@/lib/domains/crm/materials';
+import { materialLabelFromLineItems } from '@/lib/domains/planning/display';
+import { materialPill } from '@/components/dashboard/schedule/materialTheme';
 import { callablePhone } from '@/lib/domains/planning/scheduleStops';
 import { fieldViewHeading } from './fieldView';
 import FieldHeader, { BackToSchedule } from './_components/FieldHeader';
 import FieldContactsCard from './_components/FieldContactsCard';
 import FieldBeforeLeavingCard from './_components/FieldBeforeLeavingCard';
+import FieldBottomBar from './_components/FieldBottomBar';
 import { FIELD_CARD, FIELD_DIVIDER, FIELD_SECTION_TITLE, FIELD_SEGMENT_TRACK, FIELD_SHARED_CARD, FIELD_SKELETON } from './_components/fieldUi';
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
@@ -137,6 +139,9 @@ export default function WorkOrderInstallerClient({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<InstallerTab>('info');
+  // Knappradens "Rapportera säckar": räknas upp per tryck, nollas när säckkortet kvitterat. Se
+  // WorkOrderSackReportCard (openRequest).
+  const [sackRequest, setSackRequest] = useState(0);
   const customerInfo = useCustomerContact(workOrderId);
   // Vem på kontoret som äger ordern. Egen hämtning och inte `workOrder.assignee` — den joinen är
   // alltid null här, se app/crm/arbetsorder/useAssigneeContact.ts.
@@ -245,9 +250,12 @@ export default function WorkOrderInstallerClient({
   // minsta bredd — en lång länk i en kommentar räcker — och HELA sidan blöder ut åt höger. Body har
   // overflow-x:hidden, så det syns som avklippta kort, inte som en scrollbar. Samma fälla som
   // CRM-sidornas rötter (grid blowout), och samma lagning: minmax(0,1fr) klamrar kolumnen.
-  const page = (children: ReactNode) => (
+  //
+  // `withBar`: knappraden ligger fast över sidans nederkant (52 px + 2 × 12 px), så sidan behöver lika
+  // mycket luft till under det sista kortet — annars går kommentarsfältets Spara inte att nå.
+  const page = (children: ReactNode, withBar = false) => (
     <div className="min-h-dvh bg-[var(--ui-surface-muted)]">
-      <div className="mx-auto grid max-w-2xl grid-cols-1 gap-4 px-4 pb-10 pt-3">{children}</div>
+      <div className={cn('mx-auto grid max-w-2xl grid-cols-1 gap-4 px-4 pt-3', withBar ? 'pb-28' : 'pb-10')}>{children}</div>
     </div>
   );
 
@@ -297,6 +305,19 @@ export default function WorkOrderInstallerClient({
   const workScope = workOrder.internal_handoff?.work_scope || '';
   const handoffNotes = workOrder.internal_handoff?.handoff_notes || '';
 
+  // Säckkortets huvud. Materialet ur det besättningen SER (etappens rader), som stoppkortet; antalet
+  // ur HELA ordern, eftersom säckboken är per arbetsorder (se WorkOrderSackReportCard).
+  const stageMaterial = materialLabelFromLineItems(scopedLineItems);
+  const sackMaterialTag = stageMaterial ? materialPill(stageMaterial) : null;
+  const orderSacks = totalSacks((workOrder.line_items || []) as never) || null;
+
+  const showTimeButton = !canReportTime;
+  const showSackButton = !sackReports.hasFinal;
+  function reportSacks() {
+    setActiveTab('info');
+    setSackRequest((n) => n + 1);
+  }
+
   // Numret egenkontrollen slås upp med — RÅTT, aldrig documentRef. Se orderLookupRef i
   // app/crm/lib/format.ts: visningsvarianten sätter en brädgård framför Fortnox-numret och
   // /api/crm/work-orders/lookup matchar exakt, så '#6579' hade gett "Ordern hittades inte" på just
@@ -315,8 +336,8 @@ export default function WorkOrderInstallerClient({
   // utfall som att stänga vägen.
   //
   // Villkoret är alltså ett testfönster (William 2026-08-14: "jag måste ändå kunna testa"), inte en
-  // behörighetsmodell. Vid cutovern tas `canReportTime` bort härifrån och ur page.tsx, och den gula
-  // rutan nedan med den.
+  // behörighetsmodell. Vid cutovern tas `canReportTime` bort härifrån och ur page.tsx, och knappradens
+  // Tid-knapp blir då kvar för alla (se FieldBottomBar).
   //
   // Filer-fliken är däremot ALLTID med. Den är hela skälet till att besättningen öppnar ordern
   // kvällen före — ritningen och förberedelserna ligger där — och den har ingen motsvarighet till
@@ -395,6 +416,11 @@ export default function WorkOrderInstallerClient({
               besättningen fyller i när dagen tar slut. */}
           <WorkOrderSackReportCard
             className={FIELD_SHARED_CARD}
+            plannedSacks={orderSacks}
+            staged={Boolean(stage)}
+            materialTag={sackMaterialTag}
+            openRequest={sackRequest}
+            onOpenRequestHandled={() => setSackRequest(0)}
             reports={sackReports.reports}
             loading={sackReports.loading}
             hasFinal={sackReports.hasFinal}
@@ -445,35 +471,6 @@ export default function WorkOrderInstallerClient({
               med flit: ronden är chefens arbete, inte något besättningen gör innan de åker (William
               2026-11-03). Kortet delas med kontorsvyn och är orört. */}
           <WorkOrderSafetyRoundsCard workOrderId={workOrderId} visible={showSafetyRounds} />
-
-          {/* Var tiden rapporteras. Besättningen har ingen Tid-flik här (den är öppen bara för
-              attestansvariga), så utan den här rutan öppnar de jobbet, hittar ingen tidyta och
-              gissar.
-
-              Texten sa tidigare "rapportera som INTERNT PROJEKT och skriv ordernumret i
-              kommentaren" — Blikk-omvägen, som fanns för att ett CRM-planerat jobb inte gick att
-              välja där. Den omvägen är borta sedan genvägarna pekar på vår egen tidrapport: /tid
-              listar personens egna schemalagda CRM-jobb för dagen, alltså den här ordern.
-
-              Döljs för den som HAR Tid-fliken: två anvisningar som pekar åt olika håll är värre än
-              ingen alls. */}
-          {!canReportTime ? (
-            <div className="grid gap-2 rounded-[18px] border border-solid border-amber-200 bg-amber-50 p-4">
-              <p className={cn(FIELD_SECTION_TITLE, 'text-amber-800')}>Tidrapportering</p>
-              <p className="m-0 text-sm leading-relaxed text-amber-900">
-                Rapportera tiden i <strong className="font-semibold">Tidrapport</strong>. Ordern{' '}
-                <strong className="font-semibold">{orderRef}</strong>{' '}
-                går att välja direkt där, på den dag du är schemalagd på jobbet.
-              </p>
-              {/* ⚠️ En länk, inte en knapp med router.push — den hade tappat mittenklick. */}
-              <Link
-                href="/tid"
-                className="inline-flex min-h-11 w-fit items-center text-sm font-semibold text-amber-900 underline underline-offset-2 transition hover:text-amber-700"
-              >
-                Öppna Tidrapport
-              </Link>
-            </div>
-          ) : null}
 
           {/* Comments (write) — at the bottom of Info, no longer a separate tab */}
           <WorkOrderCommentsTab
@@ -545,6 +542,10 @@ export default function WorkOrderInstallerClient({
           />
         </div>
       ) : null}
+
+      {/* Var tiden rapporteras och dörren till säckformuläret — på varje flik, alltid inom räckhåll. */}
+      <FieldBottomBar showTime={showTimeButton} showSacks={showSackButton} onReportSacks={reportSacks} />
     </>,
+    showTimeButton || showSackButton,
   );
 }
